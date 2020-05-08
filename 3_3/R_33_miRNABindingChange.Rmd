@@ -1,0 +1,615 @@
+---
+title: "miRNA binding change analyses"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    highlights: pygments
+    self_contained: true
+    number_sections: yes
+    theme: readable
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+  word_document:
+    toc: yes
+---
+
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(
+  echo=T, # shows code
+  cache=F,message = F, warning = F
+)
+set.seed(31)
+```
+
+```{r, Functions, echo=T}
+rm(list=ls())
+source("A:/work/scripts/SchumacherLab/vars.R")
+source("A:/work/scripts/SchumacherLab/functions.R")
+```
+
+
+# Approach
+1. Assess whether the miRNA (mature and pre-miRNA) sequences are edited?
+2. If the miRNA target sequences on 3'UTR/5'UTR of the genes are edited?
+
+
+# Are miRNA sequences edited?
+- Here, I use the collection of miRNAs from miRBase (ref-1) (primary transcript and the mature miRNA sequence)
+- The collection contains loacations of miRNA genes in the genome and which segments of these miRNA genes are retained as the mature miRNAs
+- Simple overlap analysis suggests that 8 editing events further modify 5 miRNA gene loci in our data
+
+```{r, p1, echo=T,fig.width=12,fig.height=5}
+  MIRFILE="A:/work/mm10_Annotations/mmu_mm10_miRNAGEnomicCoords.txt"
+  load(paste0(DATADIR,"33_DRE_DE_matrix.RData"))
+  load(paste0(DATADIR,"33_EditingLevelReport_Anno.RData"))
+  mirs <- read.delim(MIRFILE,header=F,comment.char = "#",stringsAsFactors = F)
+  mirs$V1 <- gsub("chr","",mirs$V1)
+  mirs$name <- gsub(";\\S*","",gsub("\\S*Name=","",mirs$V9))
+  mirs <- with(mirs, GRanges(V1, IRanges(V4,V5),"+",anno=V3,name))
+  
+  hc <- as(hc_edits_anno,"GRanges")
+  hc <- hc[,c("idx","sample_name")]
+  
+  mirs$control <- countOverlaps(mirs,unique(hc[hc$idx%in%hlpr[hlpr$control>0,]$idx]),ignore.strand=T)
+  mirs$D7 <- countOverlaps(mirs,unique(hc[hc$idx%in%hlpr[hlpr$D7>0,]$idx]),ignore.strand=T)
+  mirs$D14 <- countOverlaps(mirs,unique(hc[hc$idx%in%hlpr[hlpr$D14>0,]$idx]),ignore.strand=T)
+  
+  m <- as.data.frame(mirs)
+  m <- m[rowSums(m[,8:10])>0,]
+  m$control <- ifelse(m$control>0,as.character("edited"),NA)
+  m$D7 <- ifelse(m$D7>0,as.character("edited"),NA)
+  m$D14 <- ifelse(m$D14>0,as.character("edited"),NA)
+  
+  datatable(m, extensions = 'Buttons',options = list(searching = TRUE,pageLength = 5,dom = 'Bfrtip', 
+                   buttons = c('excel', "csv")))
+  
+```
+
+
+# Are the targets of edited miRNAs affected?
+- To this end, I used miRTarbase database for identifying validated target genes of above miRNAs
+- Here, I assess the changes in the expression of the miRNA-target genes using an expression heatmap. 
+- In the following heatmap, expression values are transformed per gene using Z-scale transformation as well as adjusted for each sample. 
+- Adjoining heatmap represents whether the miRNA targeting the gene is edited or not in a given sample (binary representation: black or gray).
+- Rownames of the heatmap = miRNA-name | target gene name | random ID (ignore)
+
+```{r, p2, echo=T,fig.width=8,fig.height=5, warning=F}
+  load(paste0(DATADIR,"DEExpression_DESeq2.RData"))
+  ggg <- out0[[1]][,c("id","geneStart","geneEnd","gene")]
+  ggg$length <- abs(ggg$geneStart-ggg$geneEnd)
+  ggg <- ggg[,c("id","length","gene")] %>% unique
+  cnt <- DESeq2::counts(outC[[2]],normalized=F) %>% as.data.frame
+  cnt$id <- rownames(cnt)
+  cnt <- merge(cnt,ggg,by="id",all.x=T)
+  rownames(cnt) <- cnt$id
+  cnt$id <- NULL
+  cnt[,1:9] <- cnt[,1:9]*1000/cnt$length
+  cnt$length <- NULL
+  cnt[,1:9] <- apply(cnt[,1:9],2,function(x){round(x*1e6/sum(x),2)})
+  cnt <- as.data.frame(cnt)
+  cnt[,1:9] <- round(log2(cnt[,1:9]+1),2)
+  names(cnt)[1:9] <- unname(sampl[names(cnt)[1:9]])
+  cnt <- as.data.frame(cnt)
+  rm(out0,out1,outC,ggg)
+  
+  tars <- read.delim("A:/work/mm10_Annotations/miRTarBase.txt",header=T,stringsAsFactors = F)
+  
+  
+  load(paste0(DATADIR,"33_EditedmiRNAs.RData"))
+  load(paste0(DATADIR,"33_DRE_DE_matrix.RData"))
+  tars <- tars[tars$miRNA%in%editedmiRs$name,]
+  M <- merge(tars,cnt,by.x='Target.Gene',by.y="gene",all.x=T)
+  M[,10:18] <- apply(M[,10:18],1,function(x) round((x-mean(x,na.rm=T))/sd(x,na.rm=T),2)) %>% t %>% as.data.frame
+  M <- M[!is.na(M$Control_R1),]
+  
+  z <- res[,c("idx","D7","D14","control")] %>% unique
+  names(z)[2:4] <- paste0("editing_",names(z)[2:4])
+  
+  editedmiRs <- editedmiRs[,c("name","idx")] %>% unique
+  editedmiRs <- merge(editedmiRs,z,by="idx")
+  
+  M <- merge(M,editedmiRs,by.x="miRNA",by.y="name",all.x=T)
+  rownames(M) <- paste0(M$miRNA,"|",M$Target.Gene,"|",1:nrow(M))
+  M$idx <- NULL
+  M <- M[,c("Control_R1", "Control_R2", "Control_R3","D7_R1", "D7_R2", "D7_R3", 
+            "D14_R1", "D14_R2", "D14_R3", "editing_control",  "editing_D7", "editing_D14")] %>% unique
+  
+  col1 = colorRamp2(c(min(M[,1:9],na.rm=T), 0, max(M[,1:9],na.rm=T)), c("yellow","orange","red4"))
+  col2 = colorRamp2(c(min(M[,10:12],na.rm=T), 0, max(M[,10:12],na.rm=T)), c("#efedf5", "#bcbddc", "#756bb1"))
+  
+  Heatmap(M[,1:9],column_title = "Expression",name = "Exp",col = col1,cluster_columns = F,show_row_names = F)+
+    Heatmap(M[,10:12],column_title = "Edited In Sample",name = "Edit",col = col2,cluster_columns = F)
+  
+  rm(col1,col2,M,tars,cnt,res,editedmiRs)
+
+```
+
+
+- It seems that a couple of genes seem to have distinct changes of expression patterns across the conditions.
+- For instance, Dzank1, Wdr76 and Rab27a -where the last gene is upregulated at D14.
+
+
+- Another plot:
+- Besides expression heatmap, I plotted the editing and expression levels across the samples using a line plot -where the error bars represent standard error of the mean
+- If the miRNA gene is edited at high frequency, then we test whether it reflects on the expression level dynamics of the target-genes  
+- Editing levels are represented on right-Y axis in red color
+- Plot subtitles represent the edited miRNA gene locus, while p represents Pearson correlation coefficient. 
+
+
+```{r, p3, echo=T,fig.width=12,fig.height=4, warning=F}
+  load(paste0(DATADIR,"33_PlotDF_EditedMiRNA_CorrBn_valTarsNeditingLevels.RData"))
+  td <- sq %>% unique
+  td <- td[abs(td$cor)>0.5| td$Target.Gene=="Wdr76",]
+  td$id <- paste0(td$idx,td$Target.Gene)
+  
+  f=levels(as.factor(as.character(td$idx)))
+  
+  pllist <- list()
+  for(f in levels(as.factor(as.character(td$id))) ){
+    td1 <- td[td$id==f,]
+    td1$variable <- factor(td1$variable,levels=c("control","D7","D14"))
+    scaleFactor <- (max(td1$mean)) / max(td1$mean1)
+    td1$mean1 <- td1$mean1*scaleFactor
+    td1$scaleFactor <- scaleFactor
+    q <- ggplot(td1,aes(x=variable))+
+      geom_errorbar(aes(y=mean,ymin=mean-sem,ymax=mean+sem,col="red",group="red"), width=.2,position=position_dodge(0.01))+
+      geom_errorbar(aes(y=mean1,ymin=mean1-sem1,ymax=mean1+sem1,col="blue",group="blue"), width=.2,position=position_dodge(0.01))+
+      geom_line(aes(y=mean,group="red",col="red"),size=1.2)+  
+      geom_line(aes(y=mean1,group="blue",col="blue"),size=1.2)+  
+      scale_y_continuous(name="expression, log2 FPKM", sec.axis=sec_axis(~./unique(td1$scaleFactor), name="editing levels")) +
+      gg_aes+xlab("")+
+      theme(axis.title.y.left=element_text(color="cyan4"),
+            axis.text.y.left=element_text(color="cyan4"),
+            axis.title.y.right=element_text(color="red"),
+            axis.text.y.right=element_text(color="red"))+
+      ggtitle(paste0(unique(td1$Target.Gene)), subtitle = paste0( "Edit: ",unique(td1$idx), "\n",unique(td1$miRs),"\np= ", round(unique(td1$cor),2)  ))
+    pllist[[f]] <- q
+    #rm(td1,q,f,scaleFactor)
+  }
+  
+  grid.arrange(grobs=pllist,nrow=1)
+  rm(td,sq,f,td1,q,scaleFactor)
+
+```
+
+- The analysis is limited by 
+    a) number of validated miRNA targets we work with
+    b) the expression levels of the target genes. For instance, expression level of Rab27a is poor while the other two genes Dzank1 and Wdr76 are mildly expressed. 
+- In absence of any other influencing factor, the limited observations for Wdr76 and Dzank1 suggest 
+    * increased RNA editing leads to increased expression of the target genes
+    * supporting the claim that inability of the miRNA to bind their respective targets.
+
+
+# Editing at miRNA target sequences {.tabset .tabset-fade} 
+- miRNA target prediction is highly dependent on tools used for prediction.
+- A sofisticated miRDB uses machine-learning approach to provide high-confidence targets of miRNA. However, the standalone version is unavailable and furher it does not support online batch-sequence predictions. 
+- Almost all prediction tools emphasize on seed sequence complimentarity while predicting miRNA targets.
+- Hence, I decided to focus on perfect seed-sequence complimentarity as a mean to define miRNA target. This approach is used by others in the literature. 
+- Here, I used miRNA collection from TargetScan database (ref-2) that contains about ~1900 miRNA candidates across ~1500 miRNA families. 
+- A 13 bp mRNA sequences centered at RNA editing sites (within 3'/5'UTR) from our data were extracted
+- Next, I searched reverse-complimented miRNA seed sequence in mRNA sequences in the WT or carrying edits. 
+- This analysis allows us to identify both gain and loss in miRNA binding at the edited sites 
+- A table is generated that reports numbers of transcripts per miRNA-family that have either gained or lost binding due to RNA editing event. 
+- Top 15 miR- families (sorted based on maximum standard deviation) are separately plotted in below for instances of gained or lost miRNA-binding. 
+
+
+## Summary
+
+```{r, p4, echo=T,fig.width=8,fig.height=8}
+  load(paste0(DATADIR,"33_miRbinding_GainLoss_Timecourse.RData"))
+  load(paste0(DATADIR,"33_miR_lossGain_dataframe.RData"))
+  
+  
+  miRgain <- miRgain[order(miRgain$sd,decreasing = T),]
+  miRloss <- miRloss[order(miRloss$sd,decreasing = T),]
+  z <- miRgain[1:15,]
+  z$sd <- NULL
+  z <- melt(z,measure.vars = names(z)[2:4])
+  z$status <- "gain in miRNA binding"
+  z1 <- miRloss[1:15,]
+  z1$sd <- NULL
+  z1 <- melt(z1,measure.vars = names(z1)[2:4])
+  z1$status <- "loss in miRNA binding"
+  z <- rbind(z,z1)
+  rm(z1)
+  z$variable <- gsub("_\\S*","",z$variable)
+  z$variable <- factor(z$variable,levels=c("control","D7","D14"))
+ 
+  ggplot(z,aes(x=variable,y=miR))+#geom_point(aes(col=status,size=value,alpha=0.4))+
+    xlab("")+ylab("")+theme_bw()+facet_wrap(~status,ncol = 1,scales = "free_y")+
+    geom_text(aes(label=value,size=value,col=status),hjust=0, vjust=0)+
+    theme(axis.text = element_text(size=14,colour = "black"),
+          strip.text = element_text(size=16,colour = "black"),
+          legend.position = "none")
+  rm(z)
+  
+  names(miRgain)[5] <- names(miRloss)[5] <- "score"
+  
+```
+
+## Gained miRNA binding (sheet)
+- The spreadsheet summarizes the numbers of miRNA-binding event gained upon editing of the RNA 
+- Score column represents standard deviation as a measure of variation among the numbers per row
+
+
+```{r, p5, echo=T,fig.width=8,fig.height=10}
+  datatable(miRgain, extensions = 'Buttons',options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip',                                                    buttons = c('excel', "csv")))
+```
+
+
+## Lost miRNA binding (sheet)
+- The spreadsheet summarizes the numbers of miRNA-binding event lost upon editing of the RNA 
+- Score column represents standard deviation as a measure of variation among the numbers per row
+
+```{r, p6, echo=T,fig.width=8,fig.height=10}
+  datatable(miRloss, extensions = 'Buttons',options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip',                                                    buttons = c('excel', "csv")))
+```
+
+## Per-transcript summary (sheet)
+- Following table summarizes per-transcript editing event leading to miRNA binding loss or gain
+- The column name summary
+    * idx = editing site 
+    * mir = family of miRNA 
+    * D7_editLevel = editing level observed at D7 samples (geometric mean of the replicates)
+    * repeats = whether the editing occurs in repeatitive genomic region, and so, which one?
+    * known = whether the event is canonical? (1= yes, 0 = novel)
+    * ConsSocre = Conservation score across 30species MSA
+    * hg19 = whether the event is known in humans?
+    * Gene and miRNA expression values are on the log2 scale (log2 FPKM)
+
+```{r, p7, echo=T,fig.width=8,fig.height=10}
+    load(file=paste0(DATADIR,"33_miR_lossGain_dataframe_New.RData"))
+    load(paste0(DATADIR,"33_Spreadsheet_HCEditsWithCompleteAnno.RData"))
+    miRLGDF <- merge(miRLGDF,unique(SPN[,c("gene_id","GOAnno","link")]), by="gene_id",all.x=T)
+    miRLGDF <- miRLGDF[order(abs(miRLGDF$cor),decreasing = T),]
+  datatable(miRLGDF, extensions = 'Buttons',options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip',                                                    buttons = c('excel', "csv")))
+```
+
+
+- Overall, several miRNA families seem to show gain or loss in binding upon RNA editing
+- Interstingly, concurrent to the large number of editing events in control samples, most of the miRNA-binding gain/loss is observed in control samples. 
+- Nonetheless, it is possible that some biologically meaningful events present in these prediction.   
+
+
+# Expression/Editing correlation at predicted miRNA targets  {.tabset .tabset-fade} 
+- Here, the aim is to assess correlation between levels of editing at miRNA-binding site on the gene and the corresponding expression dynamics of the gene to try to establish causality.
+- The hypothesis: editing dynamics concurrently alter miRNA-binding leading to measurable changes in gene expression
+- Here, I adopted following strategy to identify concurrence
+    * First, I selected all edited sites leading to either gain or loss of miRNA binding (from above section)
+    * The expression (FPKM) of transcripts carrying these editing events were retrieved from the data
+    * If the editing leads to gain of miRNA binding, then we expect a negative correlation between editing levels and expression across all 9 samples
+    * Likewise, for loss of miRNA binding, we expect a positive correlation 
+    * When compared the numbers, around 52% of the cases show the expected trend, while the rest 48% do not - suggesting a false discovery rate of 48%. 
+    * Using this approch, a total of 33 editing sites (with absolute correlation coefficient >0.8) were identified that satisfy the expected trend
+    * Though there will be several false positives here, we can focus on instances that make biological sense and explore them further
+
+```{r, p8, echo=T,fig.width=0.1,fig.height=0.1,fig.show='hide',results='hide',fig.keep='none',message=F}
+ rm(td1,q,f,scaleFactor)
+ load(paste0(DATADIR,"33_PlotDF_miRNA_mRNA_correlations_SeedBased.RData"))
+f <- levels(as.factor(td$idx))  
+  pllist <- list()
+  for(f in levels(as.factor(td$idx))){
+    pllist[[f]] <- local({
+      td1 <- td[td$idx==f,]
+   td1$variable <- factor(td1$variable,levels=c("control","D7","D14"))
+   scaleFactor <- (max(td1$mean)) / max(td1$mean1)
+    td1$mean1 <- td1$mean1*scaleFactor
+    td1$scaleFactor <- scaleFactor
+    q <- ggplot(td1,aes(x=variable))+
+      geom_errorbar(aes(y=mean,ymin=mean-sem,ymax=mean+sem,col="red",group="red"), width=.2,position=position_dodge(0.01))+
+      geom_errorbar(aes(y=mean1,ymin=mean1-sem1,ymax=mean1+sem1,col="blue",group="blue"), width=.2,position=position_dodge(0.01))+
+      geom_line(aes(y=mean,group="red",col="red"),size=1.2)+  
+      geom_line(aes(y=mean1,group="blue",col="blue"),size=1.2)+  
+      scale_y_continuous(name="expression, log2 FPKM", sec.axis=sec_axis(~./unique(td1$scaleFactor), name="editing levels")) +
+      gg_aes+xlab("")+
+      theme(axis.title.y.left=element_text(color="cyan4"),
+            axis.text.y.left=element_text(color="cyan4"),
+            axis.title.y.right=element_text(color="red"),
+            axis.text.y.right=element_text(color="red"))+
+      ggtitle(paste0(unique(td1$gene)), subtitle = paste0( "Edit: ",unique(td1$idx), "\n",unique(td1$miRs)," (",unique(td1$ref),")\np= ", round(unique(td1$cor),2)  ))
+    print(q)
+  })
+  }
+```
+
+## set-1 (1:9)
+
+```{r, p9, echo=T,fig.width=12,fig.height=12}
+  grid.arrange(grobs=pllist[1:9],nrow=3)
+```
+
+## set-2 (10:18)
+
+```{r, p10, echo=T,fig.width=12,fig.height=12}
+  grid.arrange(grobs=pllist[10:18],nrow=4)
+```
+
+## set-3 (19:24)
+
+```{r, p11, echo=T,fig.width=12,fig.height=8}
+  grid.arrange(grobs=pllist[19:24],nrow=4)
+```
+
+
+In above plots, miRNA-binding loss/gain is displayed in the figure heading, while, p represents Pearson correlation coefficient.
+
+- Overall, it seems that, several miRNA-mRNA pairs display clear correlation between the levels of expression and editing
+
+
+
+# Expression/Editing correlation at validated miRNA targets   {.tabset .tabset-fade}
+- With same line of thinking, I focused on only the validated sets of miRNA-mRNA pairs.
+- Validated target genes for miRNAs were retrived from miRTarscan database (ref-3).
+- The target genes that carry RNA editing at the miRNA binding sites (as defined using perfect seed complimentarity) are selected for the analyses (total 126 genes encompassing 150 gene-miRNA pairs)
+- A simple Pearson correlation was calculated between the levels of edit and expression across the samples.
+- Using an arbitrary cutoff of 0.7, total 11 instances were retrieved (and displayed below) 
+- Note: The level of FDR is ~50%
+
+```{r, p12, echo=T,fig.width=0.1,fig.height=0.1,fig.show='hide',results='hide',fig.keep='none',message=F}
+ rm(td1,q,f,scaleFactor) 
+ load(paste0(DATADIR,"33_PlotDF_miRNA_mRNA_correlations_SeedBased_forTarBaseValTargets.RData"))
+ td <- td[abs(td$cor)>0.7,]
+  
+  pllist <- list()
+  for(f in levels(as.factor(td$idx))){
+    pllist[[f]] <- local({
+    td1 <- td[td$idx==f,]
+    td1$variable <- factor(td1$variable,levels=c("control","D7","D14"))
+    scaleFactor <- (max(td1$mean)) / max(td1$mean1)
+    td1$mean1 <- td1$mean1*scaleFactor
+    td1$scaleFactor <- scaleFactor
+    q <- ggplot(td1,aes(x=variable))+
+      geom_errorbar(aes(y=mean,ymin=mean-sem,ymax=mean+sem,col="red",group="red"), width=.2,position=position_dodge(0.01))+
+      geom_errorbar(aes(y=mean1,ymin=mean1-sem1,ymax=mean1+sem1,col="blue",group="blue"), width=.2,position=position_dodge(0.01))+
+      geom_line(aes(y=mean,group="red",col="red"),size=1.2)+  
+      geom_line(aes(y=mean1,group="blue",col="blue"),size=1.2)+  
+      scale_y_continuous(name="expression, log2 FPKM", sec.axis=sec_axis(~./unique(scaleFactor), name="editing levels")) +
+      gg_aes+xlab("")+
+      theme(axis.title.y.left=element_text(color="cyan4"),
+            axis.text.y.left=element_text(color="cyan4"),
+            axis.title.y.right=element_text(color="red"),
+            axis.text.y.right=element_text(color="red"))+
+      ggtitle(paste0(unique(td1$gene)), subtitle = paste0( "Edit: ",unique(td1$idx), "\n",unique(td1$miRs)," (",unique(td1$ref),")\np= ", round(unique(td1$cor),2)  ))
+  print(q)
+  })
+    #rm(td1,q,f,scaleFactor)
+  }
+  
+```
+
+## Correlations
+
+```{r, p13, echo=T,fig.width=12,fig.height=12,warning=F}
+grid.arrange(grobs=pllist,nrow=3)
+```
+
+## Heatmap
+- The expression heatmap for 150 miRNA-gene pairs id displayed below. 
+- The plotted expression values are transformed across rows and for each sample to obtain better contrasts
+- The adjoining heatmap shows overall editing level per condition (replicates are merged using geometric mean) 
+- Guide on the far left represents gain or loss of miRNA binding upon RNA editing
+
+```{r, p14, echo=T,fig.width=8,fig.height=6}
+  load(paste0(DATADIR,"DEExpression_DESeq2.RData"))
+  ggg <- out0[[1]][,c("id","geneStart","geneEnd","gene")]
+  ggg$length <- abs(ggg$geneStart-ggg$geneEnd)
+  ggg <- ggg[,c("id","length","gene")] %>% unique
+  cnt <- DESeq2::counts(outC[[2]],normalized=F) %>% as.data.frame
+  cnt$id <- rownames(cnt)
+  cnt <- merge(cnt,ggg,by="id",all.x=T)
+  rownames(cnt) <- cnt$id
+  cnt$id <- NULL
+  cnt[,1:9] <- cnt[,1:9]*1000/cnt$length
+  cnt$length <- NULL
+  cnt[,1:9] <- apply(cnt[,1:9],2,function(x){round(x*1e6/sum(x),2)})
+  cnt <- as.data.frame(cnt)
+  cnt[,1:9] <- round(log2(cnt[,1:9]+1),2)
+  names(cnt)[1:9] <- unname(sampl[names(cnt)[1:9]])
+  cnt <- as.data.frame(cnt)
+  rm(out0,out1,outC,ggg)
+  
+  load(paste0(DATADIR,"33_EditingLevelReport_Anno.RData"))
+  load(paste0(DATADIR,"33_DRE_DE_matrix.RData"))
+  load(paste0(DATADIR,"33_miRSeedOverlaps_filtermiRNAs.RData"))
+  load(paste0(DATADIR,"genes.RData"))
+  
+  mirSeedOlp$txID <- gsub("_\\S*","",mirSeedOlp$names)
+  mirSeedOlp <- merge(mirSeedOlp, unique(gGenes[,c("txID","gene")]),by="txID",all.x=T )
+  mirSeedOlp$mir <- gsub("miR","mmu-miR",mirSeedOlp$mir)
+  mirSeedOlp$test <- paste0(mirSeedOlp$gene,"|",mirSeedOlp$mir)
+  
+  
+  tars <- read.delim("A:/work/mm10_Annotations/miRTarBase.txt",header=T,stringsAsFactors = F)
+  tars$test <- paste0(tars$Target.Gene,"|",tars$miRNA)
+  
+  tars <- tars[tars$test%in%mirSeedOlp$test,]
+  tars <- merge(tars,unique(mirSeedOlp[,c("idx","seq","test")]),by="test",all.x=T)
+  ValTars <- reshape2::dcast(tars,test+Experiments+Support.Type+idx+Target.Gene~seq)
+  
+  ValTars <- merge(ValTars,cnt,by.x='Target.Gene',by.y="gene",all.x=T)
+  
+  z <- res[,c("idx","D7","D14","control")] %>% unique
+  names(z)[2:4] <- paste0("editing_",names(z)[2:4])
+  ValTars <- merge(ValTars,z,by="idx",all.x=T)
+  ValTars[,8:16] <- apply(ValTars[,8:16],1,function(x) round((x-mean(x))/sd(x),2)) %>% t %>% as.data.frame
+  
+  ### plot
+  m <- ValTars
+  m$alt <- ifelse(m$alt>1,1,m$alt)
+  m$ref <- ifelse(m$ref>1,1,m$ref)
+  m <- m[m$ref!=m$alt,]
+  rownames(m) <- 1:nrow(m)
+  
+  m <- m[order(m$alt,decreasing = T),]
+  partition = ifelse(m$alt>0,as.character("gain"),as.character("loss"))
+  col1 = colorRamp2(c(min(m[,8:16],na.rm=T), 0, max(m[,8:16],na.rm=T)), c("yellow","orange","red4"))
+  col2 = colorRamp2(c(min(m[,17:19],na.rm=T), 0, max(m[,17:19],na.rm=T)), c("#efedf5", "#bcbddc", "#756bb1"))
+  rownames(m) <- NULL
+  m <- m[,c("idx", "Target.Gene", "test", "Experiments", "Support.Type", 
+            "alt", "ref","Control_R1", "Control_R2", "Control_R3", 
+            "D7_R1", "D7_R2", "D7_R3", "D14_R1", "D14_R2", 
+            "D14_R3", "editing_control",  "editing_D7", "editing_D14")]
+  
+  
+  ht <- Heatmap(partition, col = structure(2:7, names = paste0(levels(as.factor(partition)) )), name = "miRNA-binding",
+          show_row_names = FALSE, width = unit(1, "mm"))+
+  Heatmap(m[,8:16],column_title = "Expression",name = "Exp",col = col1,cluster_columns = F)+
+  Heatmap(m[,17:19],column_title = "Editing",name = "Edit",col = col2,cluster_columns = F)
+  
+  
+  draw(ht, split = partition, heatmap_legend_side = "bottom", gap = unit(2, "mm"))
+  
+  
+  m$alt <- ifelse(m$alt>0, as.character("miRNA-binding GAIN"), as.character("miRNA-binding LOSS"))
+  m$ref <- NULL
+  names(m)[6] <- "miRNABinding"
+  
+  #datatable(m, extensions = 'Buttons',options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip', 
+  #                                                   buttons = c('excel', "csv")))
+
+```
+
+
+## spreadsheet
+- The spreadsheet presents values plotted overleaf in the heatmap
+- These are transformed values of expression
+
+```{r, p15, echo=T,fig.width=8,fig.height=6}
+datatable(m, extensions = 'Buttons',options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip',                                                    buttons = c('excel', "csv")))
+```
+
+- Some genes such as Acot2, Mdm2 and Cdk7 seem to be common between the prediction-based and this validation-based approaches - requesting further attention. 
+
+
+
+# miRNA binding enrichment {.tabset .tabset-fade}
+- As we observed in section 4, binding of several miRNA families is altered upon editing. However, does that display particular preference for a given miRNA family?
+- Are one or more miRNA families enriched for preferential gain or loss of binding in our data?
+- To test, I used seed-complimentarity based approch as outlined in section (4) to identify targets of miRNAs
+- Enrichment of the miRNA families were sought using a 2X2 Contingency table (Fisher's test), by comparing reference and edited transcript sequences for a given miRNA family
+- Following plot displays (adjusted) enrichment P-value (i.e false discovery rates) for each of the ~1500 miRNA families. 
+- The top section of the plots (shaded in yellow) represent loss of miRNA binding upon editing. While the pink shading refers to gain of miRNA binding upon editing.
+- The Y-axis values need a fix. Nevertheless, they display the FDR on -log10 scale. Please read the negative Y axis values as positive. 
+
+```{r, p16, echo=T,fig.width=8,fig.height=10}
+  load(paste0(DATADIR,"33_EditingLevelReport_Anno.RData"))
+  load(paste0(DATADIR,"33_DRE_DE_matrix.RData"))
+  load(paste0(DATADIR,"33_miRSeedOverlaps_filtermiRNAs.RData"))
+  
+  
+  myplotdf <- function(r1,cutoff=2,titl=""){
+    r2 <- table(r1$mir,r1$seq) %>% as.data.frame
+    r2 <- reshape2::dcast(r2,Var1~Var2,value.var = "Freq")
+    r2$a <- r2$ref
+    r2$b <- nrow(r1) - r2$a
+    r2$c <- r2$alt
+    r2$d <- nrow(r1) - r2$c
+    r2$pval <- apply(r2[,4:7],1,function(x){
+      fisher.test(matrix(x,nrow = 2,byrow = T),alternative = "two.sided")$p.value
+    })
+    head(r2)
+    r2$pval <- p.adjust(r2$pval,method = "fdr")
+    r2$pval <- -log10(r2$pval)
+    r2$pval <- ifelse(r2$a>r2$c,r2$pval, r2$pval*(-1))
+    r2 <- r2[order(r2$pval,decreasing = T),]
+    r2$x <- 1:nrow(r2)
+    r2$col <- 0
+    r2$col <- ifelse(r2$pval>cutoff,1,r2$col)
+    r2$col <- ifelse(r2$pval< (-1)*cutoff,2,r2$col)
+    r2$label <- NA
+    r2$label <- ifelse(r2$col>0,as.character(r2$Var1),NA)
+    gg <- ggplot(r2,aes(x=x,y=pval,col=col))+
+      geom_rect(aes(xmin = -Inf,xmax = Inf,ymin = 0, ymax = Inf, fill = "lost"), alpha = .005,fill="yellow")+
+      geom_rect(aes(xmin = -Inf,xmax = Inf,ymin = 0, ymax = -Inf, fill = "gain"), alpha = .01,fill="pink")+
+      geom_point(size=2)+
+      geom_label_repel(aes(label = label),box.padding   = 0.5,point.padding = 0.5,segment.color = 'grey50')+ 
+      ylab("False discovery rate\n -log10")+
+      ggtitle(titl)+
+      theme_bw()+
+      theme(axis.title = element_text(size=16,colour = "black"),
+            axis.text = element_text(size=14,colour = "black"),
+            plot.title = element_text(size=20,colour = "black",hjust = 0.5),
+            legend.position = "none",
+            axis.title.x = element_blank(),
+            axis.text.x = element_blank())
+    gg
+  }
+
+  r1 <- mirSeedOlp[mirSeedOlp$idx%in%hlpr[hlpr$control>0,]$idx,]
+  p1 <- myplotdf(r1,titl = "Control")
+  r1 <- mirSeedOlp[mirSeedOlp$idx%in%hlpr[hlpr$D7>0,]$idx,]
+  p2 <- myplotdf(r1,titl = "Day-7")
+  r1 <- mirSeedOlp[mirSeedOlp$idx%in%hlpr[hlpr$D14>0,]$idx,]
+  p3 <- myplotdf(r1,titl = "Day-14")
+
+  
+  grid.arrange(p1,p2,p3,nrow=3)
+ 
+```
+
+- The analysis suggests enrichment of miRNA families as were observed in earlier sections (4,5,6). 
+- Control samples show enrichment of several miRNA families that seem to be further enriched in D7 and D14 samples. 
+- One interpretation could be that editing motifs resemble the seed-sequences of the enriched families. 
+
+
+# Enrichment of Editing in predicted miRNA targets
+- Here, as suggested by Dennis, I use the predicted targets of miRNAs to look for presence/enrichment of RNA editing events
+- To this end, I used predicted and conserved miRNA targets from TargetScan database (for mm10)
+- Next, I looked for RNA editing events overlapping with this set of targets and whether there is any enrichment.
+- Apparently, we do not have enough miRNA targets (<22 total events) to perform enrichment analyses. Hence, I am just providing the summary of predicted miRNA targets here. 
+- In order to make a meaningful summary, I subselect those instances where gene expression is increased with increase in editing (as this reflects a scenario where miRNA binding is lost as the target site on mRNA is edited more)
+
+
+```{r, p17, echo=T,fig.width=0.1,fig.height=0.1, warning=F}
+  load(paste0(DATADIR,"33_PlotDF_miRNA_mRNA_correlations_PredTargets.RData"))
+  
+  pllist <- list()
+  for(f in levels(as.factor(as.character(td$id))) ){
+    pllist[[f]] <- local({
+      td1 <- td[td$id==f,]
+      td1$variable <- factor(td1$variable,levels=c("control","D7","D14"))
+      scaleFactor <- (max(td1$mean)) / max(td1$mean1)
+      td1$mean1 <- td1$mean1*scaleFactor
+      td1$scaleFactor <- scaleFactor
+      q <- ggplot(td1,aes(x=variable))+
+        geom_errorbar(aes(y=mean,ymin=mean-sem,ymax=mean+sem,col="red",group="red"), width=.2,position=position_dodge(0.01))+
+        geom_errorbar(aes(y=mean1,ymin=mean1-sem1,ymax=mean1+sem1,col="blue",group="blue"), width=.2,position=position_dodge(0.01))+
+        geom_line(aes(y=mean,group="red",col="red"),size=1.2)+  
+        geom_line(aes(y=mean1,group="blue",col="blue"),size=1.2)+  
+        scale_y_continuous(name="expression, log2 FPKM", sec.axis=sec_axis(~./unique(td1$scaleFactor), name="editing levels")) +gg_aes+xlab("")+
+        theme(axis.title.y.left=element_text(color="cyan4"),
+            axis.text.y.left=element_text(color="cyan4"),
+            axis.title.y.right=element_text(color="red"),
+            axis.text.y.right=element_text(color="red"))+
+        ggtitle(paste0(unique(td1$gene)), subtitle = paste0( "Edit: ",unique(td1$idx), "\n",unique(td1$miRs),"\np= ", round(unique(td1$cor),2)  ))
+      print(q)
+  })
+    #rm(td1,q,f,scaleFactor)
+  }
+  
+  rm(td)
+
+```
+
+
+```{r, p17a, echo=T,fig.width=12,fig.height=5, warning=F}
+ grid.arrange(grobs=pllist,nrow=1)
+```
+  
+
+
+
+# References
+1. miRBase: from microRNA sequences to function. Kozomara A, Birgaoanu M, Griffiths-Jones S.Nucleic Acids Res 2019 47:D155-D162
+2. Agarwal V, Bell GW, Nam J, Bartel DP. Predicting effective microRNA target sites in mammalian mRNAs. eLife, 4:e05005, (2015). eLife Lens view. 
+3. Ison, J. et al. (2015). Tools and data services registry: a community effort to document bioinformatics resources. Nucleic Acids Research. doi: 10.1093/nar/gkv1116
+
+# Sessioninfo
+```{r, sessioninfo, echo=T}
+sessionInfo()
+```

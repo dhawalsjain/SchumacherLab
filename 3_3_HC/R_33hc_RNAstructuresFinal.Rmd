@@ -1,0 +1,229 @@
+---
+title: "RNA Structure changes due to editing"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    highlights: pygments
+    self_contained: true
+    number_sections: yes
+    theme: readable
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+  word_document:
+    toc: yes
+---
+
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(
+  echo=T, # shows code
+  cache=F,message = F, warning = F
+)
+set.seed(31)
+```
+
+```{r, Functions, echo=T}
+rm(list=ls())
+source("A:/work/scripts/SchumacherLab/vars.R")
+source("A:/work/scripts/SchumacherLab/functions.R")
+
+```
+
+
+# Structure comparison of the RNA-hairpins 
+- Secondary structure predicted using RNAfold software (ref-1)
+- Color code on the figure can be read as high base pairing likelyhood
+- clustered events across genic regions are considered in the analyses (with overall locus length <1kb)
+- Please read the figure heading in following manner
+    * Gene 
+    * Annotation of the clustered editing locus
+    * numbner of edits in the cluster;
+- Note:The script computes a well-de???nedness measure called "positional entropy" and encodes it as color hue
+- Red (low entropy, well-de???ned) via green to blue and violet (high entropy, ill-de???ned).
+- Refer for more details (https://www.tbi.univie.ac.at/RNA/tutorial/)
+
+# spreadsheet-report
+
+```{r, p1, echo=T,fig.width=8,fig.height=6}
+  myf<- function(path="A:/work/Kreidberg lab/Valerie/PAPER/PSVisulaization/Ref/DRE_Clustered_RefSeqs_Genomic_OUT.fa"){
+    ref <- read.delim(path,header=F,stringsAsFactors = F)
+    rh <-  data.frame(id=ref[seq(1,nrow(ref),6),])
+    rh$energy <- ref[seq(3,nrow(ref),6),]
+    rh$energy <- gsub(".*?\\(","",rh$energy)
+    rh$energy <- gsub("\\)","",rh$energy)
+    rh$energy <- as.numeric(rh$energy)
+    rh$id <- gsub(">","",rh$id)
+    rm(ref)
+    rh
+  }
+  
+  ref <- myf(path="A:/work/Kreidberg lab/Valerie/PAPER/33hc_PSVisulaization/Cntr/33hc_DRE_Clustered_RefSeqs_Genomic_OUT.fa")
+  alt <- myf(path="A:/work/Kreidberg lab/Valerie/PAPER/33hc_PSVisulaization/Exp/33hc_DRE_Clustered_AltSeqs_Genomic_OUT.fa")
+  names(ref)[2] <- "ref_energy"
+  names(alt)[2] <- "alt_energy"
+  rh <- merge(ref,alt,by="id")
+  rh$pic <- paste0(gsub("\\|","_",rh$id),"_rel.jpg")
+  rh$gene <- gsub("\\|\\S*","",rh$id)
+  rh$id <- gsub("^\\S*?\\|","",rh$id)
+  rh$ncluster <- gsub("\\|\\S*","",rh$id)
+  rh$id <- gsub("^\\S*?\\|","",rh$id)
+  rh$FDR <- gsub("\\|\\S*","",rh$id)
+  rh$FDR <- formatC(rh$FDR, format = "e", digits = 2)  
+  rh$id <- gsub("^\\S*?\\|","",rh$id)
+  rh$Anno <- gsub("\\|\\S*","",rh$id)
+  rh$Anno <- gsub("_prime_","'",rh$Anno)
+  rh$Anno <- gsub("_region","",rh$Anno)
+  rh$id <- gsub("^\\S*?\\|","",rh$id)
+  rh$medainChange <- gsub("\\|\\S*","",rh$id)
+  rh$id <- gsub("^\\S*?\\|","",rh$id)
+  rh$comparison <- gsub("\\|\\S*","",rh$id)
+  rh$id <- gsub("^\\S*?\\|","",rh$id)
+  rh$id <- NULL
+  rh <- rh[,c("gene", "ncluster", "FDR", "Anno", "medainChange", "comparison","ref_energy", "alt_energy", "pic")]
+
+  rh$score <- round((rh$ref_energy- rh$alt_energy)*100/abs(rh$ref_energy),2)
+  rh <- rh[order(rh$score,decreasing = T),]
+  
+  rh1 <- rh[,c("gene", "ncluster", "FDR", "Anno", "medainChange", "comparison", 
+"ref_energy", "alt_energy", "score")]
+  names(rh1) <- c("gene", "EditsInClusters", "FDR_EditLevels", "Anno", "medainEditChange", "comparison", 
+                "Control_energy", "D7/D14_energy", "score")
+  
+  load(paste0(DATADIR,"33hc_Spreadsheet_HCEditsWithCompleteAnno.RData"))
+  SPN <- SPN[,c("gene","Control_log2Expn","D7_log2Expn","D14_log2Expn","GOAnno","link")] %>% unique
+  rh1 <- merge(rh1, SPN,by="gene",all.x=T)
+
+  datatable(rh1, extensions = 'Buttons',options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip', buttons = c('excel', "csv")))
+
+```
+
+# Figures
+- The structure of edited mRNA (Pank3) is presented for control, D7 and D14 condition, on top
+- While, the paired boxplot at the bottom summarizes changes in free-energy of all structures.
+- Out of 84 (48 for D7 and 36 for D14) instances, I selected those where the editing is elevated in D7 or D14 compared to Control samples. 
+- In the boxplots, I plotted changes in energy for premRNA structures with respect to their structures observed in control samples. 
+- The structures in control are therefore based out at 0 and the changes are quantified against the baseline (red dotted line)
+- As you can see, overall changes suggest stabilization of the RNA structures (boxes moving below 0-line in D7 and D14). However, this change is not statistically significant! (reported by ns on the top) 
+
+
+```{r, p2, echo=T,fig.width=8,fig.height=8}
+  myf<- function(path="A:/work/Kreidberg lab/Valerie/PAPER/PSVisulaization/Ref/DRE_Clustered_RefSeqs_Genomic_OUT.fa"){
+    ref <- read.delim(path,header=F,stringsAsFactors = F)
+    rh <-  data.frame(id=ref[seq(1,nrow(ref),6),])
+    rh$energy <- ref[seq(3,nrow(ref),6),]
+    rh$energy <- gsub(".*?\\(","",rh$energy)
+    rh$energy <- gsub("\\)","",rh$energy)
+    rh$energy <- as.numeric(rh$energy)
+    rh$id <- gsub(">","",rh$id)
+    rm(ref)
+    rh
+  }
+  
+  ref <- myf(path="A:/work/Kreidberg lab/Valerie/PAPER/33hc_PSVisulaization/Cntr/33hc_DRE_Clustered_RefSeqs_Genomic_OUT.fa")
+  alt <- myf(path="A:/work/Kreidberg lab/Valerie/PAPER/33hc_PSVisulaization/Exp/33hc_DRE_Clustered_AltSeqs_Genomic_OUT.fa")
+  names(ref)[2] <- "ref_energy"
+  names(alt)[2] <- "alt_energy"
+  rh <- merge(ref,alt,by="id")
+  rh$pic <- paste0(gsub("\\|","_",rh$id),"_rel.jpg")
+  rh$gene <- gsub("\\|\\S*","",rh$id)
+  rh$id <- gsub("^\\S*?\\|","",rh$id)
+  rh$ncluster <- gsub("\\|\\S*","",rh$id)
+  rh$id <- gsub("^\\S*?\\|","",rh$id)
+  rh$FDR <- gsub("\\|\\S*","",rh$id)
+  rh$id <- gsub("^\\S*?\\|","",rh$id)
+  rh$Anno <- gsub("\\|\\S*","",rh$id)
+  rh$id <- gsub("^\\S*?\\|","",rh$id)
+  rh$medainChange <- gsub("\\|\\S*","",rh$id)
+  rh$id <- gsub("^\\S*?\\|","",rh$id)
+  rh$comparison <- gsub("\\|\\S*","",rh$id)
+  rh$id <- gsub("^\\S*?\\|","",rh$id)
+  rh$id <- NULL
+  rh <- rh[,c("gene", "ncluster", "FDR", "Anno", "medainChange", "comparison","ref_energy", "alt_energy", "pic")]
+  rhx <- rh
+  
+  load(paste0(DATADIR,"33hc_DRE_DE_matrix.RData"))
+  r1 <- res[res$comparison=="D7_control" & res$clustered>0 & !is.na(res$tracking_id) & res$adj.P.Val<0.05,]
+  r1 <- r1[r1$D7>r1$control,]
+  rh1 <- rh[rh$comparison=="D7_control" & rh$gene%in%r1$gene,]
+  r1 <- res[res$comparison=="D14_control" & res$clustered>0 & !is.na(res$tracking_id) & res$adj.P.Val<0.05,]
+  r1 <- r1[r1$D14>r1$control,]
+  rh2 <- rh[rh$comparison=="D14_control" & rh$gene%in%r1$gene,]
+  rh <- rbind(rh1,rh2)
+  rm(rh1,rh2,r1)  
+  
+  rh <- rh[rh$medainChange>0,c("gene","comparison","ref_energy","alt_energy")]
+  #rh <- rh[rh$ref_energy>rh$alt_energy,]
+  rh$comparison <-gsub("_control","",rh$comparison)
+  rh <- reshape2::dcast(rh,gene+ref_energy ~ comparison, value.var = "alt_energy")
+  names(rh)[2:4] <- c("Control","Day-14","Day-7")
+  
+  rh1 <- rh[,c(1,2,4)]
+  rh1 <- rh1[complete.cases(rh1),]
+  rh1[,3] <- ((rh1[,3]-rh1[,2])*100)/abs(rh1[,2])
+  rh1[,2] <- 0
+  rh1 <- melt(rh1,measure.vars = names(rh1)[2:3])
+  p4 <- ggpaired(rh1, x = "variable", y = "value",color = "variable", 
+                 add = "jitter",line.color = "gray", line.size = 0.4)+gg_aes+
+    scale_color_manual(values=cols)+scale_fill_manual(values=cols)+
+    geom_hline(yintercept = 0,col="red",linetype="dotted",size=1.2)+
+    stat_compare_means(label = "p.signif", method = "t.test",paired = T,ref.group = "Control")+
+    xlab("")+ylab("% change in energy\n[ (Control-D7)/Control ]")
+  
+  rh1 <- rh[,c(1,2,3)]
+  rh1 <- rh1[complete.cases(rh1),]
+  rh1[,3] <- ((rh1[,3]-rh1[,2])*100)/abs(rh1[,2])
+  rh1[,2] <- 0
+  rh1 <- melt(rh1,measure.vars = names(rh1)[2:3])
+  p5 <- ggpaired(rh1, x = "variable", y = "value",color = "variable", 
+            add = "jitter",line.color = "gray", line.size = 0.4)+gg_aes+
+    scale_color_manual(values=cols)+scale_fill_manual(values=cols)+
+    geom_hline(yintercept = 0,col="red",linetype="dotted",size=1.2)+
+    stat_compare_means(label = "p.signif", method = "t.test",paired = T,ref.group = "Control")+
+    xlab("")+ylab("% change in energy\n[ (Control-D14)/Control ]")
+  
+  p1 <- ggdraw() + draw_image(paste0("A:/work/Kreidberg lab/Valerie/PAPER/33hc_PSVisulaization/Cntr/",rhx$pic[50]),scale = 1)+
+    ggtitle(paste0("Control\n",rhx$gene[50],"\n(",rhx$ref_energy[50],"  kcal/mol)" ) )+
+    theme(plot.title = element_text(hjust = 0.5))
+  p2 <- ggdraw() + draw_image(paste0("A:/work/Kreidberg lab/Valerie/PAPER/33hc_PSVisulaization/Exp/",rhx$pic[50]),scale = 1)+  
+    ggtitle(paste0("Day-7\n",rhx$gene[50],"\n(",rhx$alt_energy[50],"  kcal/mol)" ) )+
+    theme(plot.title = element_text(hjust = 0.5))
+  p3 <- ggdraw() + draw_image(paste0("A:/work/Kreidberg lab/Valerie/PAPER/33hc_PSVisulaization/Cntr/",rhx$pic[50]),scale = 1)+  
+    ggtitle(paste0("Day-14\n",rhx$gene[50],"\n(",rhx$ref_energy[50],"  kcal/mol)" ) )+
+    theme(plot.title = element_text(hjust = 0.5))
+  
+  lay <- rbind(c(1,1,2,2,3,3),
+               c(4,4,4,5,5,5))
+  grid.arrange(p1,p2,p3,p4,p5,heights=c(5,4), layout_matrix = lay)
+  
+
+```
+
+
+# References
+1. Mathews DH, Disney MD, Childs JL, Schroeder SJ, Zuker M, Turner DH. (2004) Incorporating chemical modification constraints into a dynamic programming algorithm for prediction of RNA secondary structure. Proc Natl Acad Sci U S A 101(19):7287-92.
+
+
+
+# Sessioninfo
+```{r, sessioninfo, echo=T}
+sessionInfo()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,500 @@
+---
+title: "Differenial RNA expression"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    highlights: pygments
+    self_contained: true
+    number_sections: yes
+    theme: readable
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+  word_document:
+    toc: yes
+---
+
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(
+  echo=T, # shows code
+  cache=F,message = F, warning = F
+)
+set.seed(31)
+```
+
+```{r, Functions, echo=T}
+rm(list=ls())
+source("vars.R")
+```
+
+
+# Differentially expressed genes 
+- I use HTSeq (ref-1) package to count RNA-seq reads from the bam file along the genes
+- DESeq2 package was used to identify differentially expressed genes
+- Differentially expressed genes are defined at 5% FDR cutoff
+
+## D7_vs_control {.tabset .tabset-fade}
+
+### QC plots 
+- Please refer the DESeq2 guidelines for more details 
+- Link: http://bioconductor.org/packages/devel/bioc/vignettes/DESeq2/inst/doc/DESeq2.html
+- log2 fold change is calculated as control/D7
+
+```{r, p0, echo=T,fig.width=8,fig.height=8}
+  load(paste0(DATADIR,"genes.RData"))
+  
+  load(paste0(DATADIR,"DEExpression_DESeq2.RData"))
+  d7 <- out0[[1]]
+  d7 <- d7[!is.na(d7$padj) & d7$padj<0.05,]
+  res <- out0[[1]]
+  y <- c(nrow(res[!is.na(res$padj) & res$padj<FDR_CUTOFF & res[,3]<0,]),
+         nrow(res[!is.na(res$padj) & res$padj<FDR_CUTOFF & res[,3]>0,]))
+  #y <- c(nrow(res)-sum(y), y)
+  names(y) <- c("up","down")
+  h1 <- hist(res$pvalue[is.na(res$padj)], breaks=0:50/50, plot=FALSE)
+  h2 <- hist(res$pvalue[!is.na(res$padj)], breaks=0:50/50, plot=FALSE)
+  colori <- c(`do not pass`="khaki", `pass`="powderblue")
+  
+  
+  par(mfrow=c(2,2))
+  DESeq2::plotMA(out0[[2]],main=paste0("MA plot\n (QC plot)\n"))
+  DESeq2::plotDispEsts(out0[[2]],main="Dispersion estimate\n (QC plot)")
+  
+  barplot(height = rbind(h1$counts, h2$counts), beside = FALSE,
+          col = colori, space = 0, ylab="frequency",main="P-value distribution\n (QC plot)")
+  text(x = c(0, length(h1$counts)), y = 0, label = paste(c(0,1)),
+       adj = c(0.5,1.7), xpd=NA)
+  legend("topright", fill=rev(colori), legend=rev(names(colori)))
+  
+  q <-barplot(y,main = paste0("Number of differential genes\n",gsub("log2","",names(res)[2])),ylab = "",cex.names  = 1.25,
+              cex.axis = 1.25, ylim=c(0,max(y)+0.1*max(y)), col=c("lightblue","pink"))
+  text(x = q, y = y, label = y, pos = 3,adj = -1, cex = 1.25, col = "red")
+
+  rm(h1,h2,colori,res)
+  
+```
+
+### spreadsheet
+```{r, p1, echo=T,fig.width=8,fig.height=6}
+d7$baseMean <- d7$lfcSE <- d7$stat <- NULL
+names(d7)[c(1,4)] <- c("ensemble_id","FDR")
+datatable(d7, extensions = 'Buttons',options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip', 
+                   buttons = c('excel', "csv")))
+
+```
+
+## D14_vs_control {.tabset .tabset-fade}
+
+### QC plots 
+- Please refer the DESeq2 guidelines for more details 
+- Link: http://bioconductor.org/packages/devel/bioc/vignettes/DESeq2/inst/doc/DESeq2.html
+- log2 fold change is calculated as control/D14
+
+```{r, p2, echo=T,fig.width=8,fig.height=8}
+   load(paste0(DATADIR,"DEExpression_DESeq2.RData"))
+  d7 <- out1[[1]]
+  d7 <- d7[!is.na(d7$padj) & d7$padj<0.05,]
+  res <- out1[[1]]
+  y <- c(nrow(res[!is.na(res$padj) & res$padj<FDR_CUTOFF & res[,3]<0,]),
+         nrow(res[!is.na(res$padj) & res$padj<FDR_CUTOFF & res[,3]>0,]))
+  #y <- c(nrow(res)-sum(y), y)
+  names(y) <- c("up","down")
+  h1 <- hist(res$pvalue[is.na(res$padj)], breaks=0:50/50, plot=FALSE)
+  h2 <- hist(res$pvalue[!is.na(res$padj)], breaks=0:50/50, plot=FALSE)
+  colori <- c(`do not pass`="khaki", `pass`="powderblue")
+  
+  
+  par(mfrow=c(2,2))
+  DESeq2::plotMA(out1[[2]],main=paste0("MA plot\n (QC plot)\n"))
+  DESeq2::plotDispEsts(out1[[2]],main="Dispersion estimate\n (QC plot)")
+  
+  barplot(height = rbind(h1$counts, h2$counts), beside = FALSE,
+          col = colori, space = 0, ylab="frequency",main="P-value distribution\n (QC plot)")
+  text(x = c(0, length(h1$counts)), y = 0, label = paste(c(0,1)),
+       adj = c(0.5,1.7), xpd=NA)
+  legend("topright", fill=rev(colori), legend=rev(names(colori)))
+  
+  q <-barplot(y,main = paste0("Number of differential genes\n",gsub("log2","",names(res)[2])),ylab = "",cex.names  = 1.25,
+              cex.axis = 1.25, ylim=c(0,max(y)+0.1*max(y)), col=c("lightblue","pink"))
+  text(x = q, y = y, label = y, pos = 3,adj = -1, cex = 1.25, col = "red")
+
+  rm(h1,h2,colori,res)
+
+```
+
+### spreadsheet
+```{r, p3, echo=T,fig.width=8,fig.height=6}
+d7$baseMean <- d7$lfcSE <- d7$stat <- NULL
+names(d7)[c(1,4)] <- c("ensemble_id","FDR")
+datatable(d7, extensions = 'Buttons',options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip', 
+                   buttons = c('excel', "csv")))
+
+```
+
+
+
+## Enrichment  {.tabset .tabset-fade}
+- Inthis section, GO enrichment is plotted for the misregulated genes according to their belonging to eith up or down regulated class
+
+### Figure (Combined GO)
+```{r, p4, echo=T,fig.width=12,fig.height=15}
+  load(paste0(DATADIR,"DEgenes_GOEnrichment_DESeq2.RData"))
+  z <- pl
+  z <- z[z$Count>=5,]
+  z <- z[z$Pvalue<0.001,]
+  z <- z[order(z$Pvalue,decreasing = F),]
+  z <- z[1:50,]
+  tms <- unique(z$Term)
+  z <- pl[pl$Term%in%tms,]
+  z$Pvalue <- -log10(z$Pvalue)
+  
+  ggplot(z,aes(x=comparison,y=Term))+geom_point(aes(col=Pvalue,size=Count*100/Size))+
+    xlab("")+ylab("")+theme_bw()+
+    scale_color_gradientn( colours = c("blue", "green", "orange", "red"), limits = c( 1,max(z$Pvalue)) )+
+    theme(axis.text = element_text(size=14,colour = "black"),
+          axis.text.x = element_text(angle = 45,hjust = 1),
+          strip.text = element_text(size=16,colour = "black"),
+          legend.text = element_text(size=13,colour = "black"),
+          legend.title = element_text(size=14,color = "black"))
+```
+
+### Figure (Molecular functions)
+```{r, p4.1, echo=T,fig.width=12,fig.height=15}
+  z <- pl
+  z <- z[z$Count>=5,]
+  z <- z[z$Pvalue<0.001,]
+  z <- z[z$Category=='Molecular Function',]
+  z <- z[order(z$Pvalue,decreasing = F),]
+  z <- z[1:50,]
+  tms <- unique(z$Term)
+  z <- pl[pl$Term%in%tms,]
+  z$Pvalue <- -log10(z$Pvalue)
+  
+  ggplot(z,aes(x=comparison,y=Term))+geom_point(aes(col=Pvalue,size=Count*100/Size))+
+    xlab("")+ylab("")+theme_bw()+
+    scale_color_gradientn( colours = c("blue", "green", "orange", "red"), limits = c( 1,max(z$Pvalue)) )+
+    theme(axis.text = element_text(size=14,colour = "black"),
+          axis.text.x = element_text(angle = 45,hjust = 1),
+          strip.text = element_text(size=16,colour = "black"),
+          legend.text = element_text(size=13,colour = "black"),
+          legend.title = element_text(size=14,color = "black"))
+```
+
+### Figure (Biological process)
+```{r, p4.2, echo=T,fig.width=12,fig.height=15}
+  z <- pl
+  z <- z[z$Count>=5,]
+  z <- z[z$Pvalue<0.001,]
+  
+  z <- z[z$Category=='Biological Process',]
+  z <- z[order(z$Pvalue,decreasing = F),]
+  z <- z[1:50,]
+  tms <- unique(z$Term)
+  z <- pl[pl$Term%in%tms,]
+  z$Pvalue <- -log10(z$Pvalue)
+  
+  ggplot(z,aes(x=comparison,y=Term))+geom_point(aes(col=Pvalue,size=Count*100/Size))+
+    xlab("")+ylab("")+theme_bw()+
+    scale_color_gradientn( colours = c("blue", "green", "orange", "red"), limits = c( 1,max(z$Pvalue)) )+
+    theme(axis.text = element_text(size=14,colour = "black"),
+          axis.text.x = element_text(angle = 45,hjust = 1),
+          strip.text = element_text(size=16,colour = "black"),
+          legend.text = element_text(size=13,colour = "black"),
+          legend.title = element_text(size=14,color = "black"))
+```
+
+### Figure (Cellular Component)
+```{r, p4.3, echo=T,fig.width=12,fig.height=10}
+  z <- pl
+  z <- z[z$Count>=5,]
+  z <- z[z$Pvalue<0.001,]
+  
+  z <- z[z$Category=='Cellular Component',]
+  z <- z[order(z$Pvalue,decreasing = F),]
+  z <- z[1:50,]
+  tms <- unique(z$Term)
+  z <- pl[pl$Term%in%tms,]
+  z$Pvalue <- -log10(z$Pvalue)
+  
+  ggplot(z,aes(x=comparison,y=Term))+geom_point(aes(col=Pvalue,size=Count*100/Size))+
+    xlab("")+ylab("")+theme_bw()+
+    scale_color_gradientn( colours = c("blue", "green", "orange", "red"), limits = c( 1,max(z$Pvalue)) )+
+    theme(axis.text = element_text(size=14,colour = "black"),
+          axis.text.x = element_text(angle = 45,hjust = 1),
+          strip.text = element_text(size=16,colour = "black"),
+          legend.text = element_text(size=13,colour = "black"),
+          legend.title = element_text(size=14,color = "black"))
+```
+
+
+### Spreadsheet
+- Here, all the GO terms enriched at P.value of enrichment <0.1 are listed for your reference. 
+
+```{r, p5, echo=T,fig.width=8,fig.height=6}
+datatable(pl, extensions = 'Buttons',options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip', 
+                   buttons = c('excel', "csv")))
+```
+
+## Overlap analysis {.tabset .tabset-fade}
+- All up and downregulated genes in D7 and D14 with respect to control are summarized in the followin UpSetR plot
+
+### plot
+
+```{r, p6, echo=T,fig.width=5,fig.height=4}
+  load(paste0(DATADIR,"DEExpression_DESeq2.RData"))
+  d7 <- out0[[1]]
+  d7 <- d7[!is.na(d7$padj) & d7$padj<0.05,]
+  d14 <- out1[[1]]
+  d14 <- d14[!is.na(d14$padj) & d14$padj<0.05,]
+  
+    m <- cbind(comparison="D7",d7[,c(1,10,3)])
+    names(m)[4] <- "log2FC"
+    n <- cbind(comparison="D14",d14[,c(1,10,3)])
+    names(n)[4] <- "log2FC"
+    m <- rbind(m,n)
+    rm(n)
+    m$status <- ifelse(m$log2FC>0,as.character("down"),as.character("up"))
+    m$log2FC=1
+    m$comparison <- paste0(m$comparison,"_",m$status)
+    m <- reshape2::dcast(m,id+gene~comparison,value.var = "log2FC")
+    m[is.na(m)] <- 0
+    
+    upset(m, sets = names(m)[3:6], mb.ratio = c(0.5, 0.5), order.by = c("degree"),
+          text.scale=rep(1.5,6),point.size=5,matrix.color = "steelblue4")
+  
+  
+```
+
+### Names of genes
+- Here, I only list the names of the genes in a table
+- If the gene is up or downregulated at D7 or D14, then the appropriate column contains a value of 1
+- Else, it is 0
+- Please refer the above provided detailed spreadsheet for more details on the levels and statistics of the DE genes listed int the below table
+
+
+```{r, p7, echo=T,fig.width=8,fig.height=6}
+datatable(m, extensions = 'Buttons',options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip', 
+                   buttons = c('excel', "csv")))
+```
+
+
+## Heatplots for selected genes {.tabset .tabset-fade}
+
+### Adar gene 
+- Gene FPKM expression values across the replicates are plotted here as a boxplot
+
+```{r, p8, echo=T,fig.width=5,fig.height=4}
+  load(paste0(DATADIR,"DEExpression_DESeq2.RData"))
+  load(paste0(DATADIR,"genes.RData"))
+  genes <- unique(gGenes[,1:6])
+  genes$width <- abs(genes$geneStart-genes$geneEnd)
+  cnt <- DESeq2::counts(outC[[2]],normalized=T) %>% as.data.frame
+  names(cnt) <- unname(unlist(l1[names(cnt)]))
+  cnt$id <- rownames(cnt)
+  cnt <- merge(cnt,genes[,c("gene","gene_id","width")],by.x="id",by.y="gene_id")
+  cnt <- unique(cnt)
+  rownames(cnt) <- cnt$id
+  cnt$id <- NULL
+  cnt$width <-cnt$width/1000
+  cnt[,1:9] <- round(cnt[,1:9]/cnt$width,2)
+  cnt$width <- NULL
+  cnt[,1:9] <- log2(cnt[,1:9]+1)
+  
+  go <- read.delim("A:/work/mm10_Annotations/GO_term_summary_20200123_210425.txt",row.names = NULL,stringsAsFactors = F)
+  pods <- read.csv("A:/work/mm10_Annotations/scrna.mouse.podocyte.refined.csv",stringsAsFactors = F)
+  pods <-pods$Podocytes.gene
+  
+  m <- cnt[cnt$gene=="Adar",]
+  pl <- melt(m)
+  pl$variable <- gsub("_2","_3",pl$variable)
+  pl$variable <- gsub("_1","_2",pl$variable)
+  pl$variable <- gsub("_0","_1",pl$variable)
+  pl$variable <- gsub("Control","control",pl$variable)
+  pl$gt <- gsub("_\\S*","",pl$variable)
+  pl$variable <- factor(pl$variable,levels=c("control","D7","D14"))
+  
+  ggplot(pl, aes(x=gt, y=value, fill=gt,alpha=0.2)) + 
+    geom_boxplot()+geom_jitter(width = 0.2)+
+    scale_fill_manual(values=cols)+
+    stat_compare_means(label = "p.signif", method = "t.test",ref.group = "control") +
+    theme_bw()+xlab("")+ylab("expression level, log2 FPKM")+
+    theme(axis.text = element_text(size=18,color="black"),
+          axis.title = element_text(size=18,color="black"),
+          legend.position = "none")
+  rm(m,pl)
+
+```
+
+### Plot:Podocyte genes
+- Podocyte specific genes (ref-3, please double check!) were obtained from Lucy
+- Total of 49 genes are displayed
+- Heatmap color represents Z-normalized gene expression score
+
+```{r, p9, echo=T,fig.width=6,fig.height=8}
+  m <- cnt[cnt$gene%in%pods,1:9]
+  m <- m[rowSums(m)>0,]
+  m <- t(apply(m,1,function(x) round((x-mean(x))/sd(x),3)))
+  m <- round(m,3)
+  x <- rownames(m)
+  x <- cnt[match(x,rownames(cnt)),]$gene
+  m <- m[,c("control_R1","control_R2","control_R3","D7_R1","D7_R2","D7_R3","D14_R1","D14_R2","D14_R3")]
+  #x[-seq(1,length(x),2)] <- NA
+  hmcols<-(colorRampPalette(c("yellow","orange","red4"))(256))
+  heatmap3((m),tck=0.8,Colv = NA,cexRow = 0.7,labRow = x,
+           symm = F,margins = c(5,20),cexCol = 0.7,col = hmcols,scale="none",useRaster = T)
+
+```
+
+### Podocyte genes
+
+```{r, 10, echo=T,fig.width=8,fig.height=6}
+datatable(cnt[cnt$gene%in%pods,], extensions = 'Buttons',options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip', buttons = c('excel', "csv")))
+
+```
+
+### Plot:miRNA silencing related genes
+- Genes with GO annotation of miRNA mediated silencing (GO:GO:0035195) were used in the following plot
+- 67/137 genes in this category were expressed in the assay
+- Heatmap color represents Z-normalized gene expression score
+
+```{r, p11, echo=T,fig.width=6,fig.height=8}
+  mygenes <- unique(go$MGI.Gene.Marker.ID)
+  m <- cnt[cnt$gene%in%mygenes,1:9]
+  m <- m[rowSums(m)>0,]
+  m <- t(apply(m,1,function(x) round((x-mean(x))/sd(x),3)))
+  m <- round(m,3)
+  x <- rownames(m)
+  x <- cnt[match(x,rownames(cnt)),]$gene
+  x[-seq(1,length(x),5)] <- NA
+  hmcols<-(colorRampPalette(c("yellow","orange","red4"))(256))
+  m <- m[,c("control_R1","control_R2","control_R3","D7_R1","D7_R2","D7_R3","D14_R1","D14_R2","D14_R3")]
+
+  heatmap3((m),tck=0.8,Colv = NA,cexRow = 0.7,labRow = x,
+           symm = F,margins = c(5,20),cexCol = 0.7,col = hmcols,scale="none",useRaster = T)
+
+```
+
+### miRNA silencing associated genes
+
+```{r, p12, echo=T,fig.width=8,fig.height=6}
+datatable(cnt[cnt$gene%in%mygenes,], extensions = 'Buttons',options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip', buttons = c('excel', "csv")))
+
+```
+
+# Comparing WT1 and old expression data
+- One way to compare the old and new data is to perform side by side comparison by including the samples from WT1 data
+- However, this runs into a batch effect problem 
+- I remove the batch effect by following 2 approaches
+    * DESeq2 : Here, I explicitly tried to model batch as a variable in the design matrix (not satifactory)
+    * SVA: I used SVA package to remove batch effect from the count data (generates negative counts)
+- In following plot, samples are grouped after removing the batch effects using SVA (ref-)    
+
+```{r, p13, echo=T,fig.width=8,fig.height=6}
+  load(paste0(DATADIR,"WT1_ValerieCombibedDEExpn_DESeq2_batch.RData"))
+  load(paste0(DATADIR,"WT1_ValerieCombibedDEExpn_DESeq2_SVA.RData"))
+  load(paste0(DATADIR,"DEExpression_DESeq2.RData"))
+  load(paste0(DATADIR,"DEExpression_DESeq2_WT1.RData"))
+  expn <- read.delim("A:/work/Kreidberg lab/Valerie/Bam0_CuffDiff/isoform_exp.diff",header=T,stringsAsFactors = F)
+  expn <- unique(expn[,2:3])
+  
+  names(cf_sva) <- c("D7_R1", "D7_R2", "D7_R3", "Control_R3", "Control_R2", "D14_R1", 
+                     "D14_R2", "D14_R3", "Control_R1", "D9_S1", "D14_S1", "D14_S2", 
+                     "D9_S2", "Control_S1", "D9_S3", "D14_S3", "Control_S2", 
+                     "Control_S3")
+  pca_data=prcomp(t(cf_sva))
+  pca_data_perc=round(100*pca_data$sdev^2/sum(pca_data$sdev^2),1)
+  df_pca_data=data.frame(PC1 = pca_data$x[,1], PC2 = pca_data$x[,2], 
+                         sample = names(cf_sva), condition=gsub("_\\S+","",names(cf_sva)),
+                         label=names(cf_sva),
+                         batch=c(rep("New",9), rep("Old",9)))
+  g1 <- ggplot(df_pca_data, aes(PC1,PC2, color = condition,label=label))+geom_text_repel(box.padding = 0.1)+
+    geom_point(size=8)+
+    labs(x=paste0("PC1 (",pca_data_perc[1],")"), y=paste0("PC2 (",pca_data_perc[2],")"))+
+    scale_color_brewer(palette = "Dark2")+
+    theme(legend.position = "bottom")
+  
+  g2 <- ggplot(df_pca_data, aes(PC1,PC2, color = batch,label=label))+geom_text_repel(box.padding = 0.1)+
+    geom_point(size=8)+
+    labs(x=paste0("PC1 (",pca_data_perc[1],")"), y=paste0("PC2 (",pca_data_perc[2],")"))+
+    scale_color_brewer(palette = "Dark2")+
+    theme(legend.position = "bottom")
+  
+  grid.arrange(g1,g2,nrow=1)
+```
+
+## Comparing DE genes {.tabset .tabset-fade}
+- Biologically more meaningful way of comparing the gene expression data is to compare the lists of DE genes
+- To this end, I use 5% FDR to identify lists of DE gene in the comparisons
+
+### Comparing D14-WT1 and D14 DE genes
+```{r, p14, echo=T,fig.width=8,fig.height=6}
+  load(paste0(DATADIR,"DEExpression_DESeq2.RData"))
+  load(paste0(DATADIR,"DEExpression_DESeq2_WT1.RData"))
+  names(out0[[1]])[3] <- names(out1[[1]])[3] <- names(out2[[1]])[3] <- names(out3[[1]])[3] <- "log2FC"
+  z <- c()
+  z <- rbind(cbind(expt="new",test="D7_control",out0[[1]]),
+  cbind(expt="new",test="D14_control",out1[[1]]),
+  cbind(expt="old",test="D9_control",out2[[1]]),
+  cbind(expt="old",test="D14_control",out3[[1]]))
+  rm(out0,out1,out2,out3)
+  
+  z <- z[!is.na(z$padj) & z$padj<0.05,]
+  z$test <- gsub("_control","",z$test)
+  z$log2FCc <- ifelse(z$log2FC>0,as.character("up"),as.character("down"))
+  z$var <- paste0(z$test,"_",z$expt,"_",z$log2FCc)
+  z$test <- 1
+  yy <- unique(z[,c("id","var","log2FC")])
+  yy <- reshape2::dcast(yy,id~var,value.var = "log2FC")
+  yy <- merge(yy,expn,by.x="id",by.y="gene_id")
+  yy[is.na(yy)] <- 0
+  yy <- yy[,c(1,10,2:9)]
+  z <- reshape2::dcast(z,id~var,value.var = "test")
+  z[is.na(z)] <- 0
+ 
+  upset(z, sets = names(z)[2:5], mb.ratio = c(0.5, 0.5), order.by = c("degree"),
+        text.scale=rep(1.5,6),point.size=5,matrix.color = "steelblue4")
+  
+```
+
+### Comparing D7 and D9 DE genes
+```{r, p15, echo=T,fig.width=8,fig.height=6}
+upset(z, sets = names(z)[6:9], mb.ratio = c(0.5, 0.5), order.by = c("degree"),
+        text.scale=rep(1.5,6),point.size=5,matrix.color = "steelblue4")
+```
+
+### Comparing D14-WT1 and D7 DE genes
+```{r, p16, echo=T,fig.width=8,fig.height=6}
+ upset(z, sets = names(z)[c(4:7)], mb.ratio = c(0.5, 0.5), order.by = c("degree"),
+        text.scale=rep(1.5,6),point.size=5,matrix.color = "steelblue4")
+```
+
+### Comparing D9-WT1 and D14 DE genes
+```{r, p17, echo=T,fig.width=8,fig.height=6}
+upset(z, sets = names(z)[c(2,3,8,9)], mb.ratio = c(0.5, 0.5), order.by = c("degree"),
+        text.scale=rep(1.5,6),point.size=5,matrix.color = "steelblue4")
+```
+
+
+### Spreadsheet
+```{r, p18, echo=T,fig.width=8,fig.height=6}
+datatable(yy, extensions = 'Buttons',options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip', buttons = c('excel', "csv")))
+
+```
+
+
+
+
+# References
+1. Simon Anders, Paul Theodor Pyl, Wolfgang Huber HTSeq — A Python framework to work with high-throughput sequencing data. Bioinformatics (2014), in print, online at doi:10.1093/bioinformatics/btu638
+2. Love MI, Huber W, Anders S (2014). “Moderated estimation of fold change and dispersion for RNA-seq data with DESeq2.” Genome Biology, 15, 550. doi: 10.1186/s13059-014-0550-8.
+3. Rinschen MM, Gödel M, Grahammer F, et al. A Multi-layered Quantitative In Vivo Expression Atlas of the Podocyte Unravels Kidney Disease Candidate Genes. Cell Rep. 2018;23(8):2495–2508. doi:10.1016/j.celrep.2018.04.059
+4. Leek JT, Johnson WE, Parker HS, Fertig EJ, Jaffe AE, Storey JD, Zhang Y, Torres LC (2019). sva: Surrogate Variable Analysis. R package version 3.34.0.
+
+# Sessioninfo
+```{r, sessioninfo, echo=T}
+sessionInfo()
+```

@@ -1,0 +1,1254 @@
+---
+title: "RNASeq-Editing Annotations"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    highlights: pygments
+    self_contained: true
+    number_sections: yes
+    theme: readable
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+  word_document:
+    toc: yes
+---
+
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(
+  echo=T, # shows code
+  cache=F,message = F, warning = F
+)
+set.seed(31)
+```
+
+```{r, Functions, echo=T}
+  rm(list=ls())
+ source("A:/work/scripts/SchumacherLab/vars.R")
+  
+  myf_getClusteredEdits <- function(Z1){
+    unv <- reduce(resize(Z1,51,"center"),ignore.strand=T)
+    unv <- unv[width(unv)>51]
+    unv$id <- 1:length(unv)
+    o <- findOverlaps(Z1,unv,ignore.strand=T) %>% as.data.frame
+    Z1$clusterid <- NA
+    Z1[o$queryHits]$clusterid <- unv[o$subjectHits]$id
+    Z1 <- Z1[!is.na(Z1$clusterid)]
+    Z1
+  }
+```
+
+
+# Sample Quality control  {.tabset .tabset-fade}
+
+## Sequencing depths
+- Number of reads in million
+
+```{r, p0, echo=T,fig.width=6,fig.height=4}
+  libs$sample <- unlist(l1[as.character(libs$profile)])
+  libs$condition <- gsub("_\\S*","",libs$sample)
+  libs$sample <- factor(libs$sample,levels=c("control_R1", "control_R2", "control_R3",
+                                             "D7_R1", "D7_R2", "D7_R3",
+                                             "D14_R1", "D14_R2", "D14_R3"))
+  
+  ggplot(libs, aes(x=sample,y=depths,fill=condition,col=condition,alpha=0.2))+
+    geom_bar(stat = "identity",position="dodge")+
+    xlab("")+ylab("number of sequences \n in Millions")+
+    scale_fill_manual(values = cols)+scale_color_manual(values=cols)+
+    theme_bw()+gg_aes+
+    theme(axis.text.x = element_text(angle = 90,hjust = 1))
+  
+```
+
+## sample names
+- Number abbreviations used while sequencing
+
+```{r, p1, echo=T,fig.width=8,fig.height=4}
+ datatable(libs, extensions = 'Buttons',options = list(searching = TRUE,pageLength = 5,dom = 'Bfrtip', 
+                   buttons = c('excel', "csv")))
+```
+
+
+# RNA editing workflow
+- RNA editing events were individualy called on the 9 samples using RNAEditor (ref-1)
+- RNAEditor uses 'bwa aln' aligner. I edited the program to use Bowtie2 (ref-2) aligner, which performs better at mapping the split reads. 
+- Furthermore, I allowed for reporting of the editing sites right around the splice-junctions.
+- The editing sites from all 9 samples were merged together with ~110k editing sites available from 3 different databases (DARNED, REPORTAL and RADAR)
+- The final, combined pool of editing sites were queried against the STAR-aligner (ref-3) mapped bam files for the 9 samples
+- I used `samtools mpileup -q 10 ` for counting the number of edited reads at each of the combined pool sites
+- The output was parsed using `mpileup2readcounts 0 -5 false 1 0` (ref-4) 
+- Each editing site for a given sample was filtered using the criteria outlined on the figure. 
+    * Read coverage at the site (>=10)
+    * Sites with 100% editing were ommitted (only when 100% editing was observed across all samples)
+    * Edits present in 3/3 replicates are retained as high confidence sites
+
+![Workflow used to identify editing events](A:/work/Kreidberg lab/Valerie/PAPER/FIG/workflow_33HC.png)
+- The plot summarizes percent of sites that were imputed for each condition (i.e. control, D7, D14)
+
+```{r, p2, echo=T,fig.width=5,fig.height=4}
+  load(paste0(DATADIR,"33hc_EditingLevelReport_Anno.RData"))
+  hc_edits_anno$condition <- gsub("_\\S*","",hc_edits_anno$sample_name)
+  hc_edits_anno$sample_name <- factor(hc_edits_anno$sample_name,levels=c("control_R1", "control_R2", "control_R3","D7_R1", "D7_R2", "D7_R3","D14_R1", "D14_R2", "D14_R3"))
+  hc_edits_anno$condition <- factor(hc_edits_anno$condition,levels=c("control","D7","D14"))
+  
+  pl <- c()
+  for(f in c("control","D7","D14")){
+    r <- hc_edits_anno[grep(f,hc_edits_anno$sample_name),]
+    r <- reshape2::dcast(r,idx~sample_name,value.var = "width")
+    r$test <- apply(r[,2:4],1,function(x) sum(is.na(x)))
+    r <- r[r$test<1,]
+    r$test <- NULL
+    pl <- rbind(pl,data.frame(perc=sum(is.na(r))*100/(nrow(r)*3),prof=f))
+    rm(r)
+  }
+  ggplot(pl, aes(x=prof,y=perc,fill=prof,col=prof,alpha=0.2))+
+    geom_bar(stat = "identity",position="dodge")+
+    xlab("")+ylab("% of total sites\n that are imputed")+
+    scale_fill_manual(values = cols)+scale_color_manual(values=cols)+
+    theme_bw()+gg_aes
+  
+```
+
+
+# Editing Annotations (samples)  {.tabset .tabset-fade}
+- I used SnpEff pipeline (ref-6) for variant annotation to annotate RNA editing events
+    * `java -Xmx4g -jar snpEff.jar GRCm38.75 $inp.vcf > $out.vcf`
+- For consequence analyses, I used Variant Effect Predictor (ref-7) to annotate the editing sites
+- Genome build : mm10 (GRCm38.75)
+- Following sections display annotations of the edited sites in our data
+- Please note that due to overlapping annotations of certain genomic features, it is possible that above approaches resolve ties in different manner. This may lead to discrepancy in annotating a site. 
+
+## Levels
+```{r, p3, echo=T,fig.width=8,fig.height=6}
+  
+  
+ggplot(hc_edits_anno, aes(x=sample_name,y=H,fill=sample_name,alpha=0.2)) + geom_violin() + theme_bw()+
+    geom_boxplot(width=0.1, fill="white",outlier.size = NULL)+
+    scale_color_manual(values=cols)+scale_fill_manual(values = cols)+
+    #stat_compare_means(label = "p.signif", method = "t.test",ref.group = "control_R1")+
+    xlab("")+ylab("editing levels")+gg_aes+
+    theme(axis.text.x = element_text(angle = 90))+
+    ggtitle("individual samples")
+```
+
+## known/novel
+
+```{r, p4, echo=T,fig.width=8,fig.height=6}
+  pl <- table(hc_edits_anno$sample_name,hc_edits_anno$known) %>% as.data.frame
+  pl$Var2 <- ifelse(pl$Var2==0, as.character("novel"),as.character("known"))
+  pl$Var2 <- factor(pl$Var2,levels=c("novel","known"))
+  ggplot(pl, aes(fill=Var2, y=Freq, x=Var1,alpha=0.2)) + geom_bar(position="stack", stat="identity")+
+    scale_fill_brewer(palette = "Dark2")+
+    theme_bw()+gg_aes+theme(axis.text.x = element_text(angle = 90),legend.position = "top")+
+    xlab("")+ylab("number of edits")
+```
+
+## repeats
+
+```{r, p5, echo=T,fig.width=8,fig.height=6}
+  pl <- table(hc_edits_anno$repeats,hc_edits_anno$sample_name) %>% as.data.frame
+  pl$Var1 <- gsub("Alu","Alu-like",pl$Var1)
+  pl$Var1 <- gsub("non-Alu-like","non-Alu",pl$Var1)
+  pl$Var1 <- factor(pl$Var1,levels = (c("Nonrepetitive", "Alu-like", "Repetitive non-Alu")))
+  ggplot(pl, aes(fill=Var1, y=Freq, x=Var2,alpha=0.2)) + geom_bar(position="stack", stat="identity")+
+    scale_fill_brewer(palette = "Dark2")+
+    theme_bw()+gg_aes+theme(axis.text.x = element_text(angle = 90),
+                     legend.position = "top")+
+    xlab("")+ylab("number of edits")
+ 
+```
+
+## genomic features
+
+```{r, p6, echo=T,fig.width=8,fig.height=6}
+  categories <- c("3_prime_UTR", "5_prime_UTR", "intergenic_region", "intron", 
+    "missense", "splice_","synonymous")
+  pl <- c()
+  for(f in categories){
+    for(prof in levels(hc_edits_anno$sample_name)) {
+      qwe <- hc_edits_anno[hc_edits_anno$sample_name==prof,]
+      pl <- rbind(pl,
+                  data.frame(category=f,profile=prof, size=length(unique(grep(f,qwe$snpeff)))))
+      rm(qwe)
+    }
+  }
+  pl$category <- gsub("_prime_UTR","'UTR",pl$category)
+  pl$category <- gsub("_region","",pl$category)
+  pl$category  <- gsub("splice_","splice_region",pl$category)
+  
+  ggplot(pl, aes(fill=category, y=size, x=profile,alpha=0.5)) + geom_bar(position="fill", stat="identity")+
+    scale_fill_brewer(palette = "Dark2")+
+    theme_bw()+gg_aes+theme(axis.text.x = element_text(angle = 90),
+                     legend.position = "top")+
+    xlab("")+ylab("fraction of edits")
+
+```
+
+## genomic features(uq)
+- Unique annotations with following priority
+- missense > synonymous > splice > 3_prime_UTR > 5_prime_UTR > intron > intergenic_region
+
+```{r, p7, echo=T,fig.width=8,fig.height=6}
+  pl <- c()
+  for(prof in levels(hc_edits_anno$sample_name)) {
+      qwe <- hc_edits_anno[hc_edits_anno$sample_name==prof,]
+      pl <- rbind(pl,
+                  cbind(profile=prof,as.data.frame(table(qwe$snpeff_uq)) ))
+      rm(qwe)
+  }
+  names(pl)[2:3] <- c("category","size")
+  pl$category <- gsub("_prime_UTR","'UTR",pl$category)
+  pl$category <- gsub("_region","",pl$category)
+  pl$category  <- gsub("splice","splice_region",pl$category)
+  
+  ggplot(pl, aes(fill=category, y=size, x=profile,alpha=0.5)) + geom_bar(position="fill", stat="identity")+
+    scale_fill_brewer(palette = "Dark2")+
+    theme_bw()+gg_aes+theme(axis.text.x = element_text(angle = 90),
+                            legend.position = "top")+
+    xlab("")+ylab("fraction of edits")
+  
+```
+
+## spreadsheet
+- idx = editing locus and edited base
+- known = Novel/Known?
+- repeat = Whether in genomic repeats?
+- snpeff_uq = genomic annotation. Please note that the annotation has received following priority
+    * missense > synonymous > splice > 3_prime_UTR > 5_prime_UTR > intron > intergenic_region
+- aaswap = Whther leads to AA change?
+- D9_Wt1/D14_Wt1/Control_Wt1 = distance to nearest Wt1 peak at respective time points
+- cHMM_final = chromatin HMM state 
+- Expression values : geometric mean of expression (FPKM) on log2 scale
+- Editing levels: Geometric means of editing levels across 3 replicates
+- ConsScore = 30species multiple sequence alignment probability (1= highly conserved, 0=unique in mouse)
+- UCNE name/ID = ultraconserved enhancer name and ID
+- hg19 = whether the editing site is conserved in human
+- clusrd? = whether the site is clustered in the given condition (1= yes, 0 = no)
+
+```{r, p8, echo=T,fig.width=8,fig.height=6}
+load(paste0(DATADIR,"33hc_Spreadsheet_HCEditsWithCompleteAnno.RData"))
+datatable(SPN, extensions = 'Buttons',options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip', 
+                   buttons = c('excel', "csv")))
+```
+
+
+
+# Editing Annotations (samples, clustered)  {.tabset .tabset-fade}
+- Editing within 50bp are considered as clustered sites
+
+## Levels
+```{r, p9, echo=T,fig.width=8,fig.height=6}
+  ### hyper-edited loci
+  hc <- c()
+  Z <- as(hc_edits_anno,"GRanges")
+  Z <- Z[grep("control",Z$sample_name)]
+  a1 <- myf_getClusteredEdits(unique(Z))
+  Z <- Z[Z$idx%in%a1$idx] %>% as.data.frame
+  hc <- rbind(hc,Z)
+  rm(Z,a1)
+  Z <- as(hc_edits_anno,"GRanges")
+  Z <- Z[grep("D7",Z$sample_name)]
+  a1 <- myf_getClusteredEdits(unique(Z))
+  Z <- Z[Z$idx%in%a1$idx] %>% as.data.frame
+  hc <- rbind(hc,Z)
+  rm(Z,a1)
+  Z <- as(hc_edits_anno,"GRanges")
+  Z <- Z[grep("D14",Z$sample_name)]
+  a1 <- myf_getClusteredEdits(unique(Z))
+  Z <- Z[Z$idx%in%a1$idx] %>% as.data.frame
+  hc <- rbind(hc,Z)
+  rm(Z,a1)
+  
+
+
+ggplot(hc, aes(x=sample_name,y=H,fill=sample_name,alpha=0.2)) + geom_violin() + theme_bw()+
+    geom_boxplot(width=0.1, fill="white",outlier.size = NULL)+
+    scale_color_manual(values=cols)+scale_fill_manual(values = cols)+
+    #stat_compare_means(label = "p.signif", method = "t.test",ref.group = "control_R1")+
+    xlab("")+ylab("editing levels")+gg_aes+
+    theme(axis.text.x = element_text(angle = 90))+
+    ggtitle("individual samples")
+```
+
+## known/novel
+
+```{r, p10, echo=T,fig.width=8,fig.height=6}
+  pl <- table(hc$sample_name,hc$known) %>% as.data.frame
+  pl$Var2 <- ifelse(pl$Var2==0, as.character("novel"),as.character("known"))
+  pl$Var2 <- factor(pl$Var2,levels=c("novel","known"))
+  ggplot(pl, aes(fill=Var2, y=Freq, x=Var1,alpha=0.2)) + geom_bar(position="stack", stat="identity")+
+    scale_fill_brewer(palette = "Dark2")+
+    theme_bw()+gg_aes+theme(axis.text.x = element_text(angle = 90),legend.position = "top")+
+    xlab("")+ylab("number of edits")
+```
+
+## repeats
+
+```{r, p11, echo=T,fig.width=8,fig.height=6}
+  pl <- table(hc$repeats,hc$sample_name) %>% as.data.frame
+   pl$Var1 <- gsub("Alu","Alu-like",pl$Var1)
+  pl$Var1 <- gsub("non-Alu-like","non-Alu",pl$Var1)
+  pl$Var1 <- factor(pl$Var1,levels = (c("Nonrepetitive", "Alu-like", "Repetitive non-Alu")))
+ ggplot(pl, aes(fill=Var1, y=Freq, x=Var2,alpha=0.2)) + geom_bar(position="stack", stat="identity")+
+    scale_fill_brewer(palette = "Dark2")+
+    theme_bw()+gg_aes+theme(axis.text.x = element_text(angle = 90),
+                     legend.position = "top")+
+    xlab("")+ylab("number of edits")
+ 
+```
+
+## genomic features
+
+```{r, p12, echo=T,fig.width=8,fig.height=6}
+  categories <- c("3_prime_UTR", "5_prime_UTR", "intergenic_region", "intron", 
+    "missense", "splice_","synonymous")
+  pl <- c()
+  for(f in categories){
+    for(prof in levels(hc$sample_name)) {
+      qwe <- hc_edits_anno[hc$sample_name==prof,]
+      pl <- rbind(pl,
+                  data.frame(category=f,profile=prof, size=length(unique(grep(f,qwe$snpeff)))))
+      rm(qwe)
+    }
+  }
+  pl$category <- gsub("_prime_UTR","'UTR",pl$category)
+  pl$category <- gsub("_region","",pl$category)
+  pl$category  <- gsub("splice_","splice_region",pl$category)
+  
+  ggplot(pl, aes(fill=category, y=size, x=profile,alpha=0.5)) + geom_bar(position="fill", stat="identity")+
+    scale_fill_brewer(palette = "Dark2")+
+    theme_bw()+gg_aes+theme(axis.text.x = element_text(angle = 90),
+                     legend.position = "top")+
+    xlab("")+ylab("fraction of edits")
+
+```
+
+## genomic features(uq)
+- Unique annotations with following priority
+- missense > synonymous > splice > 3_prime_UTR > 5_prime_UTR > intron > intergenic_region
+
+```{r, p13, echo=T,fig.width=8,fig.height=6}
+  pl <- c()
+  for(prof in levels(hc$sample_name)) {
+      qwe <- hc[hc$sample_name==prof,]
+      pl <- rbind(pl,
+                  cbind(profile=prof,as.data.frame(table(qwe$snpeff_uq)) ))
+      rm(qwe)
+  }
+  names(pl)[2:3] <- c("category","size")
+  pl$category <- gsub("_prime_UTR","'UTR",pl$category)
+  pl$category <- gsub("_region","",pl$category)
+  pl$category  <- gsub("splice","splice_region",pl$category)
+  
+  ggplot(pl, aes(fill=category, y=size, x=profile,alpha=0.5)) + geom_bar(position="fill", stat="identity")+
+    scale_fill_brewer(palette = "Dark2")+
+    theme_bw()+gg_aes+theme(axis.text.x = element_text(angle = 90),
+                            legend.position = "top")+
+    xlab("")+ylab("fraction of edits")
+  
+```
+
+## spreadsheet
+- idx = editing locus and edited base
+- known = Novel/Known?
+- repeat = Whether in genomic repeats?
+- snpeff_uq = genomic annotation. Please note that the annotation has received following priority
+    * missense > synonymous > splice > 3_prime_UTR > 5_prime_UTR > intron > intergenic_region
+- aaswap = Whther leads to AA change?
+- D9_Wt1/D14_Wt1/Control_Wt1 = distance to nearest Wt1 peak at respective time points
+- cHMM_final = chromatin HMM state 
+- Expression values : geometric mean of expression (FPKM) on log2 scale
+- Editing levels: Geometric means of editing levels across 3 replicates
+- ConsScore = 30species multiple sequence alignment probability (1= highly conserved, 0=unique in mouse)
+- UCNE name/ID = ultraconserved enhancer name and ID
+- hg19 = whether the editing site is conserved in human
+- clusrd? = whether the site is clustered in the given condition (1= yes, 0 = no)
+
+
+```{r, p14, echo=T,fig.width=8,fig.height=6}
+load(paste0(DATADIR,"33hc_Spreadsheet_HCEditsWithCompleteAnno.RData"))
+SPN <- SPN[rowSums(SPN[,23:25])>0,]
+datatable(SPN, extensions = 'Buttons',options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip', 
+                   buttons = c('excel', "csv")))
+```
+
+
+
+# Editing Annotations (merged)  {.tabset .tabset-fade}
+
+## Levels 
+
+```{r, p15, echo=T,fig.width=5,fig.height=4}
+   ggplot(hc_edits_anno, aes(x=condition,y=H,fill=condition,alpha=0.2)) + geom_violin() + theme_bw()+
+    geom_boxplot(width=0.1, fill="white",outlier.size = NULL)+
+    scale_color_manual(values=cols)+scale_fill_manual(values = cols)+
+    stat_compare_means(label = "p.signif", method = "t.test",ref.group = "control")+
+    xlab("")+ylab("editing levels")+gg_aes+
+    ggtitle("merged replicates")
+```
+
+## known/unknown
+```{r, p16, echo=T,fig.width=5,fig.height=4}
+  pl <- rbind(cbind(hlpr[hlpr$control>0,],gt="control\n(1829)"),
+              cbind(hlpr[hlpr$D7>0,],gt="D7\n(725)"),
+              cbind(hlpr[hlpr$D14>0,],gt="D14\n(686)"))
+ pl$repeats <- gsub("Alu","Alu-like",pl$repeats)
+  pl$repeats <- gsub("non-Alu-like","non-Alu",pl$repeats)
+  pl$repeats <- factor(pl$repeats,levels = (c("Nonrepetitive", "Alu-like", "Repetitive non-Alu")))
+   
+ggplot(pl, aes(fill=as.factor(known), x=gt,alpha=0.2)) + geom_bar(position="fill")+
+    scale_fill_brewer(palette = "Dark2")+
+    theme_bw()+gg_aes+theme(legend.position = "top")+
+    xlab("")+ylab("fraction of edits")
+```
+
+## repeats
+```{r, p17, echo=T,fig.width=5,fig.height=4}
+  ggplot(pl, aes(fill=as.factor(repeats), x=gt,alpha=0.2)) + geom_bar(position="fill")+
+    scale_fill_brewer(palette = "Dark2")+
+    theme_bw()+gg_aes+theme(legend.position = "top")+
+    xlab("")+ylab("fraction of edits")
+```
+
+## genomic features
+```{r, p18, echo=T,fig.width=5,fig.height=4}
+  categories <- c("3_prime_UTR", "5_prime_UTR", "intergenic_region", "intron", 
+                  "missense", "synonymous", "splice")
+  qq <- c()
+  for(f in categories){
+    for(prof in levels(pl$gt)) {
+      qwe <- pl[pl$gt==prof,]
+      qq <- rbind(qq,
+                  data.frame(category=f,profile=prof, size=length(unique(grep(f,qwe$snpeff)))))
+      rm(qwe)
+    }
+  }
+  qq$category <- gsub("splice","splice_region",qq$category)
+  qq$category <- gsub("_prime_","'",qq$category)
+  qq$category <- gsub("_region","",qq$category)
+  ggplot(qq, aes(fill=category, y=size, x=profile,alpha=0.2)) + geom_bar(position="fill", stat="identity")+
+    scale_fill_brewer(palette = "Dark2")+
+    theme_bw()+gg_aes+theme(legend.position = "top")+
+    xlab("")+ylab("fraction of edits")
+```
+
+## genomic features(uq)
+- Unique annotations with following priority
+- missense > synonymous > splice > 3_prime_UTR > 5_prime_UTR > intron > intergenic_region
+
+```{r, p19, echo=T,fig.width=5,fig.height=4}
+qq <- c()
+for(prof in levels(pl$gt)) {
+  qwe <- pl[pl$gt==prof,]
+  qq <- rbind(qq,
+              data.frame(profile=prof, data.frame(table(qwe$snpeff_uq))))
+  rm(qwe)
+}
+names(qq)[2:3] <- c("category","size")
+qq$category <- gsub("_prime_UTR","'UTR",qq$category)
+qq$category <- gsub("_region","",qq$category)
+qq$category  <- gsub("splice","splice_region",qq$category)
+
+ggplot(qq, aes(fill=category, y=size, x=profile,alpha=0.5)) + geom_bar(position="fill", stat="identity")+
+  scale_fill_brewer(palette = "Dark2")+
+  theme_bw()+gg_aes+theme(legend.position = "top")+
+  xlab("")+ylab("fraction of edits")
+```
+
+## Editing Level counts
+- Figure simlar to Breen et al (S4)
+```{r, p19.1, echo=T,fig.width=8,fig.height=4}
+hc_edits_anno %>% dplyr::select(idx,condition,H) %>% 
+  unique %>% 
+  ggplot(aes(x=H,fill=condition,alpha=0.2))+geom_bar(stat = "bin",binwidth = 0.01,col="gray70")+
+  facet_wrap(~condition,nrow = 1)+
+  scale_color_manual(values=cols)+
+  scale_fill_manual(values=cols)+gg_aes+
+  scale_x_continuous(breaks = c(0,0.25,0.5,0.75,1),labels = c(0,0.25,0.5,0.75,1),expand = c(0,0))+
+  scale_y_continuous(expand = c(0,0))+
+  xlab("editing level")+theme(strip.background = element_blank())
+
+
+```
+
+
+## overlaps-1
+
+```{r, p20, echo=T,fig.width=8,fig.height=6}
+  m <- imputed_edits
+  m <- ifelse(m>0,1,0) %>% as.data.frame
+  m$D7 <- rowSums(m[,1:3])
+  m$D14 <- rowSums(m[,4:6])
+  m$Control <- rowSums(m[,7:9])
+  m <- m[,10:12]
+  m <- ifelse(m>0,1,0) %>% as.data.frame
+  m$id <- rownames(m)
+  m <- merge(m,unique(hc_edits_anno[,c("id","known","repeats")]),by="id")
+  m$known <- ifelse(m$known==1,"known","novel")
+  m$repeats <- gsub("Alu","Alu-like",m$repeats)
+  m$repeats <- gsub("non-Alu-like","non-Alu",m$repeats)
+  m$repeats <- factor(m$repeats,levels = (c("Nonrepetitive", "Alu-like", "Repetitive non-Alu")))
+   
+
+  i<-0
+  mylist<-list()
+  vectorUniqueValue <- unique(m$known)
+  while ( length(vectorUniqueValue)>0 ){
+    i<-i+1
+    mylist[[ i ]]<-list(query = elements, params = list("known",as.character(vectorUniqueValue)), 
+                        active = T,query.name=as.character(vectorUniqueValue)[1])
+    vectorUniqueValue<-vectorUniqueValue[-1]
+  }
+  upset(m, sets = names(m)[2:4], mb.ratio = c(0.5, 0.5), order.by = c("degree"),
+        text.scale=rep(1.5,6),point.size=5,matrix.color = "steelblue4",
+        queries = mylist,query.legend="bottom",color.pal = 1)
+  rm(i,mylist,vectorUniqueValue)
+
+```
+
+## overlaps-2
+
+```{r, p21, echo=T,fig.width=8,fig.height=6}
+  i<-0
+  mylist<-list()
+  vectorUniqueValue <- unique(m$repeats)
+  while ( length(vectorUniqueValue)>0 ){
+    i<-i+1
+    mylist[[ i ]]<-list(query = elements, params = list("repeats",as.character(vectorUniqueValue)), 
+                        active = T,query.name=as.character(vectorUniqueValue)[1])
+    vectorUniqueValue<-vectorUniqueValue[-1]
+  }
+  upset(m, sets = names(m)[2:4], mb.ratio = c(0.5, 0.5), order.by = c("degree"),
+        text.scale=rep(1.5,6),point.size=5,matrix.color = "steelblue4",
+        queries = mylist,query.legend="bottom",color.pal = 1)
+  rm(i,mylist,vectorUniqueValue)
+
+```
+
+
+
+# Editing Annotations (merged,clustered)  {.tabset .tabset-fade}
+
+## Levels 
+
+```{r, p22, echo=T,fig.width=5,fig.height=4}
+ hc$condition <- factor(hc$condition,levels=c("control","D7","D14"))   
+ggplot(hc, aes(x=condition,y=H,fill=condition,alpha=0.2)) + geom_violin() + theme_bw()+
+    geom_boxplot(width=0.1, fill="white",outlier.size = NULL)+
+    scale_color_manual(values=cols)+scale_fill_manual(values = cols)+
+    stat_compare_means(label = "p.signif", method = "t.test",ref.group = "control")+
+    xlab("")+ylab("editing levels")+gg_aes+
+    ggtitle("merged replicates")
+```
+
+## known/unknown
+```{r, 23, echo=T,fig.width=5,fig.height=4}
+  
+  hc <- c()
+  hl <- c()
+  
+  Z <- as(hc_edits_anno,"GRanges")
+  Z <- Z[grep("control",Z$sample_name)]
+  a1 <- myf_getClusteredEdits(unique(Z))
+  Z <- Z[Z$idx%in%a1$idx] %>% as.data.frame
+  hc <- rbind(hc,Z)
+  hl <- rbind(hl,unique(hlpr[hlpr$idx%in%Z$idx & hlpr$control>0,]))
+  rm(Z,a1)
+  Z <- as(hc_edits_anno,"GRanges")
+  Z <- Z[grep("D7",Z$sample_name)]
+  a1 <- myf_getClusteredEdits(unique(Z))
+  Z <- Z[Z$idx%in%a1$idx] %>% as.data.frame
+  hc <- rbind(hc,Z)
+  hl <- rbind(hl,hlpr[hlpr$idx%in%Z$idx & hlpr$D7>0,])
+  rm(Z,a1)
+  Z <- as(hc_edits_anno,"GRanges")
+  Z <- Z[grep("D14",Z$sample_name)]
+  a1 <- myf_getClusteredEdits(unique(Z))
+  Z <- Z[Z$idx%in%a1$idx] %>% as.data.frame
+  hc <- rbind(hc,Z)
+  hl <- rbind(hl,hlpr[hlpr$idx%in%Z$idx & hlpr$D14>0,])
+  rm(Z,a1)
+  hl <- unique(hl)
+  
+  pl <- rbind(cbind(hl[hl$control>0,],gt="control\n(1205)"),
+              cbind(hl[hl$D7>0,],gt="D7\n(479)"),
+              cbind(hl[hl$D14>0,],gt="D14\n(474)"))
+  pl$repeats <- gsub("Alu","Alu-like",pl$repeats)
+  pl$repeats <- gsub("non-Alu-like","non-Alu",pl$repeats)
+  pl$repeats <- factor(pl$repeats,levels = (c("Nonrepetitive", "Alu-like", "Repetitive non-Alu")))
+   
+
+  ggplot(pl, aes(fill=as.factor(known), x=gt,alpha=0.2)) + geom_bar(position="fill")+
+    scale_fill_brewer(palette = "Dark2")+
+    theme_bw()+gg_aes+theme(legend.position = "top")+
+    xlab("")+ylab("fraction of edits")
+```
+
+## repeats
+```{r, p24, echo=T,fig.width=5,fig.height=4}
+  ggplot(pl, aes(fill=as.factor(repeats), x=gt,alpha=0.2)) + geom_bar(position="fill")+
+    scale_fill_brewer(palette = "Dark2")+
+    theme_bw()+gg_aes+theme(legend.position = "top")+
+    xlab("")+ylab("fraction of edits")
+```
+
+## genomic features
+```{r, p25, echo=T,fig.width=5,fig.height=4}
+  categories <- c("3_prime_UTR", "5_prime_UTR", "intergenic_region", "intron", 
+                  "missense", "synonymous", "splice")
+  qq <- c()
+  for(f in categories){
+    for(prof in levels(pl$gt)) {
+      qwe <- pl[pl$gt==prof,]
+      qq <- rbind(qq,
+                  data.frame(category=f,profile=prof, size=length(unique(grep(f,qwe$snpeff)))))
+      rm(qwe)
+    }
+  }
+  qq$category <- gsub("splice","splice_region",qq$category)
+  qq$category <- gsub("_prime_","'",qq$category)
+  qq$category <- gsub("_region","",qq$category)
+  ggplot(qq, aes(fill=category, y=size, x=profile,alpha=0.2)) + geom_bar(position="fill", stat="identity")+
+    scale_fill_brewer(palette = "Dark2")+
+    theme_bw()+gg_aes+theme(legend.position = "top")+
+    xlab("")+ylab("fraction of edits")
+```
+
+## genomic features(uq)
+- Unique annotations with following priority
+- missense > synonymous > splice > 3_prime_UTR > 5_prime_UTR > intron > intergenic_region
+
+```{r, p26, echo=T,fig.width=5,fig.height=4}
+qq <- c()
+for(prof in levels(pl$gt)) {
+  qwe <- pl[pl$gt==prof,]
+  qq <- rbind(qq,
+              data.frame(profile=prof, data.frame(table(qwe$snpeff_uq))))
+  rm(qwe)
+}
+names(qq)[2:3] <- c("category","size")
+qq$category <- gsub("_prime_UTR","'UTR",qq$category)
+qq$category <- gsub("_region","",qq$category)
+qq$category  <- gsub("splice","splice_region",qq$category)
+
+ggplot(qq, aes(fill=category, y=size, x=profile,alpha=0.5)) + geom_bar(position="fill", stat="identity")+
+  scale_fill_brewer(palette = "Dark2")+
+  theme_bw()+gg_aes+theme(legend.position = "top")+
+  xlab("")+ylab("fraction of edits")
+```
+
+## Editing Level counts
+- Figure simlar to Breen et al (S4)
+```{r, p26.1, echo=T,fig.width=8,fig.height=4}
+hc %>% dplyr::select(idx,condition,H) %>% 
+  unique %>% 
+  ggplot(aes(x=H,fill=condition,alpha=0.2))+geom_bar(stat = "bin",binwidth = 0.01,col="gray70")+
+  facet_wrap(~condition,nrow = 1)+
+  scale_color_manual(values=cols)+
+  scale_fill_manual(values=cols)+gg_aes+
+  scale_x_continuous(breaks = c(0,0.25,0.5,0.75,1),labels = c(0,0.25,0.5,0.75,1),expand = c(0,0))+
+  scale_y_continuous(expand = c(0,0))+
+  xlab("editing level")+theme(strip.background = element_blank())
+
+
+```
+
+
+
+# Editing enrichment along gene-biotypes {.tabset .tabset-fade}
+- RNA editing events overlapping with different genomic  features are displayed as barplots
+- Here, the background refers to distribution of biotypes across all ~46k genes in the mouse genome
+- While, editing events overlapping with different gene-biotypes are displayed as % of total edits in the sample (after imputing the data)
+
+## All editing events
+
+```{r, p27, echo=T,fig.width=6,fig.height=5}
+
+  load(paste0(DATADIR,"33hc_EditingLevelReport_Anno.RData"))
+  load(paste0(DATADIR,"genes.RData"))
+  hc_edits_anno$condition <- gsub("_\\S*","",hc_edits_anno$sample_name)
+  Z <- as(hc_edits_anno,"GRanges")
+  genes <- with(gGenes,GRanges(chr,IRanges(geneStart,geneEnd),strand,biotype,gene))
+  genes <- unique(genes)
+  o <- findOverlaps(Z,genes,ignore.strand=T)
+  Z$biotype <- NA
+  Z$gene <- NA
+  Z[queryHits(o)]$biotype <- genes[subjectHits(o)]$biotype
+  Z[queryHits(o)]$gene <- genes[subjectHits(o)]$gene
+  hc_edits_anno <- as.data.frame(Z)
+  Z <- unique(hc_edits_anno[,c("gene","biotype","idx")])
+  hlpr <- merge(hlpr,Z,by="idx")
+  
+  pl <- rbind(
+  cbind(as.data.frame(table(hlpr[hlpr$control>0,]$biotype)),profile="control"),
+  cbind(as.data.frame(table(hlpr[hlpr$D7>0,]$biotype)),profile="D7"),
+  cbind(as.data.frame(table(hlpr[hlpr$D14>0,]$biotype)),profile="D14"),
+  cbind(as.data.frame(table(genes$biotype)),profile="Background"))
+  
+  pl <- data.table(pl)
+  pl <- pl[,tot:=sum(Freq),by=list(profile)]
+  pl <- as.data.frame(pl)
+  pl$perc <- round(pl$Freq/pl$tot,2)
+  pl <- pl[pl$perc>0,]
+  
+  ggplot(pl,aes(x=Var1,y=perc,fill=profile))+geom_bar(stat="identity",position="dodge")+
+    gg_aes+ coord_flip()+scale_fill_manual(values = cols)+ylab("fraction of total edits")+
+    xlab("")+  theme(legend.position = "top")
+  
+
+```
+
+## Clustered editing events
+- Here, I use clustered editing events for calculating the fractions. 
+- Editing events occuring within 50bp of each other are referred as clustered
+
+```{r, p28, echo=T,fig.width=6,fig.height=5}
+
+  load(paste0(DATADIR,"33hc_EditingLevelReport_Anno.RData"))
+  load(paste0(DATADIR,"genes.RData"))
+  hc_edits_anno$condition <- gsub("_\\S*","",hc_edits_anno$sample_name)
+  Z <- as(hc_edits_anno,"GRanges")
+  genes <- with(gGenes,GRanges(chr,IRanges(geneStart,geneEnd),strand,biotype,gene))
+  genes <- unique(genes)
+  o <- findOverlaps(Z,genes,ignore.strand=T)
+  Z$biotype <- NA
+  Z$gene <- NA
+  Z[queryHits(o)]$biotype <- genes[subjectHits(o)]$biotype
+  Z[queryHits(o)]$gene <- genes[subjectHits(o)]$gene
+  hc_edits_anno <- as.data.frame(Z)
+  Z <- unique(hc_edits_anno[,c("gene","biotype","idx")])
+  hlpr <- merge(hlpr,Z,by="idx")
+  
+  Z <- as(hc_edits_anno,"GRanges")
+  ## Control clusters
+  uqc <- Z[grep("control",Z$sample_name),]
+  uqc <- unique(uqc[,c("id","idx")])
+  d1 <- reduce(resize(uqc,101,"center"))
+  d1 <- resize(d1,width(d1)-100,"center")
+  d1 <- d1[width(d1)>50]
+  uqc$clustered <- countOverlaps(uqc,d1,ignore.strand=T)
+  uqc <- uqc[uqc$clustered>0]
+  hlpr$control_clustered <- ifelse(hlpr$idx%in%uqc$idx,1,0)
+  #sum(hlpr$control_clustered)
+  ## D7 clusters
+  uqc <- Z[grep("D7",Z$sample_name),]
+  uqc <- unique(uqc[,c("id","idx")])
+  d1 <- reduce(resize(uqc,101,"center"))
+  d1 <- resize(d1,width(d1)-100,"center")
+  d1 <- d1[width(d1)>50]
+  uqc$clustered <- countOverlaps(uqc,d1,ignore.strand=T)
+  uqc <- uqc[uqc$clustered>0]
+  hlpr$D7_clustered <- ifelse(hlpr$idx%in%uqc$idx,1,0)
+  ## D14 clusters
+  uqc <- Z[grep("D14",Z$sample_name),]
+  uqc <- unique(uqc[,c("id","idx")])
+  d1 <- reduce(resize(uqc,101,"center"))
+  d1 <- resize(d1,width(d1)-100,"center")
+  d1 <- d1[width(d1)>50]
+  uqc$clustered <- countOverlaps(uqc,d1,ignore.strand=T)
+  uqc <- uqc[uqc$clustered>0]
+  hlpr$D14_clustered <- ifelse(hlpr$idx%in%uqc$idx,1,0)
+  
+  pl <- rbind(
+    cbind(as.data.frame(table(hlpr[hlpr$control>0 & hlpr$control_clustered>0,]$biotype)),profile="control"),
+    cbind(as.data.frame(table(hlpr[hlpr$D7>0 & hlpr$D7_clustered>0,]$biotype)),profile="D7"),
+    cbind(as.data.frame(table(hlpr[hlpr$D14>0 & hlpr$D14_clustered>0,]$biotype)),profile="D14"),
+    cbind(as.data.frame(table(genes$biotype)),profile="Background"))
+  
+  pl <- data.table(pl)
+  pl <- pl[,tot:=sum(Freq),by=list(profile)]
+  pl <- as.data.frame(pl)
+  pl$perc <- round(pl$Freq/pl$tot,2)
+  pl <- pl[pl$perc>0,]
+  
+  ggplot(pl,aes(x=Var1,y=perc,fill=profile))+geom_bar(stat="identity",position="dodge")+
+    gg_aes+ coord_flip()+scale_fill_manual(values = cols)+ylab("fraction of total edits")+
+    xlab("")+  theme(legend.position = "top")
+  
+
+```
+
+
+## Loner editing events 
+- These are the editing events that are >50bp from the preceeding or next editing event on the chromosome
+
+```{r, p28.1, echo=T,fig.width=6,fig.height=5}
+  pl <- rbind(
+    cbind(as.data.frame(table(hlpr[hlpr$control>0 & hlpr$control_clustered==0,]$biotype)),profile="control"),
+    cbind(as.data.frame(table(hlpr[hlpr$D7>0 & hlpr$D7_clustered==0,]$biotype)),profile="D7"),
+    cbind(as.data.frame(table(hlpr[hlpr$D14>0 & hlpr$D14_clustered==0,]$biotype)),profile="D14"),
+    cbind(as.data.frame(table(genes$biotype)),profile="Background"))
+  
+  pl <- data.table(pl)
+  pl <- pl[,tot:=sum(Freq),by=list(profile)]
+  pl <- as.data.frame(pl)
+  pl$perc <- round(pl$Freq/pl$tot,2)
+  pl <- pl[pl$perc>0,]
+  
+  ggplot(pl,aes(x=Var1,y=perc,fill=profile))+geom_bar(stat="identity",position="dodge")+
+    gg_aes+ coord_flip()+scale_fill_manual(values = cols)+ylab("fraction of total edits")+
+    xlab("")+  theme(legend.position = "top")
+  
+
+```
+
+
+# Inter-edit distance plots {.tabset .tabset-fade}
+- A borrowed way of plotting editing events is to use the "kataegis" plots as used in cancer genomics area
+- Here, assuming that the editing occurs primarily co-transcriptionally, we can plot the distances between successive editing events along the entire length of the genome.
+- Such plots are typically referred to as "kataegis" or "rainfall" plots where the clustered events can be visialized as a shower of rain (vertically descending points)
+- In such plots, Y-axis refers to inter-editing distance on log10 scale
+- While, X-axis refers to the genomic position along each chromosome from its start to end. 
+- Each editing event is referred by a point. 
+- Additionally, I color code the points based on their annotation, novelty or the repeatitive element in which they fall. 
+- Pink shaded boxes on the plot refer to clustered editing limit of 50bases
+
+## Repeat-Annotations
+- Whether the editing occurs in any of the repeatitive DNA elements
+
+```{r, p29, echo=T,fig.width=15,fig.height=8,warning=F}
+  load(paste0(DATADIR,"33hc_EditingSites_Kataegis.RData"))
+  cf$known <- ifelse(cf$known==0, as.character("novel"),as.character("known"))
+  cf$repeats <- gsub("Alu","Alu-like",cf$repeats)
+  cf$repeats <- gsub("non-Alu-like","non-Alu",cf$repeats)
+
+  
+  rect1=rbind(data.frame(xmin=0,xmax=Inf,ymin=0,ymax=log10(50),loc="clustered"))
+  
+  p <- ggplot(cf,aes(y=log10(dist2next),x=pos,col=repeats)) + geom_point(alpha=0.4,size=1.5)+  
+         geom_vline(xintercept = c(chrs$cumlen,chrs$cumlen[24]+chrs$length[24]),col="black") + xlab("") + ylab("Genomic Distance") +
+         scale_y_continuous(expand = c(0, 0),breaks=c(0,2,4,6),labels=c("0", "0.1k", "10k","1Mio"))+
+         scale_x_continuous(expand = c(0, 0),breaks=(chrs$cumlen+round(chrs$length/2)),labels=factor(chrs$chr) )+ #+ theme(axis.text.x = element_blank(),axis.ticks.x = element_blank())
+         facet_wrap(~profile,ncol=1,scales = "free_y")+
+         scale_fill_brewer(palette = "Dark2")+scale_color_brewer(palette = "Dark2")+
+         geom_rect(data=rect1, aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax), fill="pink", alpha=0.3, inherit.aes = FALSE)+
+         gg_aes+     
+         theme(legend.position = "bottom",legend.key = element_rect(fill=NA),legend.title = element_blank(),  
+               legend.text = element_text(colour="black", size = 15, face = "bold"),
+               strip.background = element_blank(),strip.text = element_text(size=15,colour = "black"),
+               plot.title = element_text(size = 16,hjust=0.5))+ 
+         guides(colour = guide_legend(override.aes = list(alpha=1,size=5)))+
+         ggtitle(label = paste("Editing sites"),subtitle = "(color by repeat annotations)")
+  p
+  
+```
+
+## Genomic-Annotations
+- Unique annotations with following priority
+- mi-ssense > synonymous > splice > 3_prime_UTR > 5_prime_UTR > intron > intergenic_region
+
+```{r, p30, echo=T,fig.width=15,fig.height=8,warning=F}
+    
+  p <- ggplot(cf,aes(y=log10(dist2next),x=pos,col=snpeff_uq)) + geom_point(alpha=0.4,size=1.5)+  
+    geom_vline(xintercept = c(chrs$cumlen,chrs$cumlen[24]+chrs$length[24]),col="black") + xlab("") + ylab("Genomic Distance") +
+    scale_y_continuous(expand = c(0, 0),breaks=c(0,2,4,6),labels=c("0", "0.1k", "10k","1Mio"))+
+    scale_x_continuous(expand = c(0, 0),breaks=(chrs$cumlen+round(chrs$length/2)),labels=factor(chrs$chr) )+ #+ theme(axis.text.x = element_blank(),axis.ticks.x = element_blank())
+    facet_wrap(~profile,ncol=1,scales = "free_y")+
+    scale_fill_brewer(palette = "Dark2")+scale_color_brewer(palette = "Dark2")+
+    geom_rect(data=rect1, aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax), fill="pink", alpha=0.3, inherit.aes = FALSE)+
+    gg_aes+     
+    theme(legend.position = "bottom",legend.key = element_rect(fill=NA),legend.title = element_blank(),  
+          legend.text = element_text(colour="black", size = 15, face = "bold"),
+          strip.background = element_blank(),strip.text = element_text(size=15,colour = "black"),
+          plot.title = element_text(size = 16,hjust=0.5))+ 
+    guides(colour = guide_legend(override.aes = list(alpha=1,size=5)))+
+    ggtitle(label = paste("Editing sites"),subtitle = "(color by genomic annotations)") + theme(plot.title = element_text(size = 16,hjust=0.5))
+  p
+  
+
+```
+
+## Novelty
+
+```{r, p31, echo=T,fig.width=15,fig.height=8,warning=F}
+  
+  p <- ggplot(cf,aes(y=log10(dist2next),x=pos,col=as.factor(known))) + geom_point(alpha=0.4,size=1.5)+  
+    geom_vline(xintercept = c(chrs$cumlen,chrs$cumlen[24]+chrs$length[24]),col="black") + xlab("") + ylab("Genomic Distance") +
+    scale_y_continuous(expand = c(0, 0),breaks=c(0,2,4,6),labels=c("0", "0.1k", "10k","1Mio"))+
+    scale_x_continuous(expand = c(0, 0),breaks=(chrs$cumlen+round(chrs$length/2)),labels=factor(chrs$chr) )+ #+ theme(axis.text.x = element_blank(),axis.ticks.x = element_blank())
+    facet_wrap(~profile,ncol=1,scales = "free_y")+
+    scale_fill_brewer(palette = "Dark2")+scale_color_brewer(palette = "Dark2")+
+    geom_rect(data=rect1, aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax), fill="pink", alpha=0.3, inherit.aes = FALSE)+
+    gg_aes+     
+    theme(legend.position = "bottom",legend.key = element_rect(fill=NA),legend.title = element_blank(),  
+          legend.text = element_text(colour="black", size = 15, face = "bold"),
+          strip.background = element_blank(),strip.text = element_text(size=15,colour = "black"),
+          plot.title = element_text(size = 16,hjust=0.5))+ 
+    guides(colour = guide_legend(override.aes = list(alpha=1,size=5)))+
+    ggtitle(label = paste("Editing sites"),subtitle = "(color by novelty)") + theme(plot.title = element_text(size = 16,hjust=0.5))
+  p
+
+```
+
+## Overall gene expression
+- In this section, the FPKM expression of the gene is plotted along Y-axis
+- X-axis represents the start of the gene locus on the chromosome (as earlier)
+- FPKM expression of the genes were derived by generating a countable using HTSeq, followed by normalization of the data for sequencing depth variations using DESeq2, as described elsewhere
+
+```{r, p32, echo=T,fig.width=15,fig.height=8,warning=F}
+  
+  cnt$col="1"
+  cnt <- melt(cnt,measure.vars = c("D7_FPKM","D14_FPKM","Control_FPKM"))
+  cnt$variable <- factor(cnt$variable,levels=c("Control_FPKM","D7_FPKM","D14_FPKM"))
+
+  p <- ggplot(cnt,aes(y=value,x=pos,col=col)) + geom_point(alpha=0.4,size=0.8)+  
+    geom_vline(xintercept = c(chrs$cumlen,chrs$cumlen[24]+chrs$length[24]),col="black") + xlab("") + ylab("Expression, log2 FPKM") +
+    scale_y_continuous(expand = c(0, 0))+
+    scale_x_continuous(expand = c(0, 0),breaks=(chrs$cumlen+round(chrs$length/2)),labels=factor(chrs$chr) )+ #+ theme(axis.text.x = element_blank(),axis.ticks.x = element_blank())
+    facet_wrap(~variable,ncol=1,scales = "free_y")+
+    scale_fill_brewer(palette = "Dark2")+scale_color_brewer(palette = "Dark2")+
+    geom_rect(data=rect1, aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax), fill="pink", alpha=0.3, inherit.aes = FALSE)+
+    gg_aes+     
+    theme(legend.position = "bottom",legend.key = element_rect(fill=NA),legend.title = element_blank(),  
+          legend.text = element_text(colour="black", size = 15, face = "bold"),
+          strip.background = element_blank(),strip.text = element_text(size=15,colour = "black"),
+          plot.title = element_text(size = 16,hjust=0.5))+ 
+    guides(colour = guide_legend(override.aes = list(alpha=1,size=5)))+
+    ggtitle(label = paste("Gene expression"),subtitle = "(log2 FPKM)") + theme(plot.title = element_text(size = 16,hjust=0.5))
+  p
+
+```
+
+## Editing levels
+- In similar fashion, I plot here the editing levels along the genomic coordinates
+- The editing levels are imputed, when the 3rd replicate has a missing value of RNA editing level.
+- Geometric mean of the editing level is plotted on Y-axis, while the X-axis represents genomic coordinates
+
+```{r, p33, echo=T,fig.width=15,fig.height=8,warning=F}
+  
+  cntLevels$col="1"
+  cntLevels <- melt(cntLevels,measure.vars = c("D7","D14","Control"))
+cntLevels$variable <- factor(cntLevels$variable,levels = c("Control","D7","D14"))
+  p <- ggplot(cntLevels,aes(y=value,x=pos,col=col)) + geom_point(alpha=0.4,size=0.8)+  
+    geom_vline(xintercept = c(chrs$cumlen,chrs$cumlen[24]+chrs$length[24]),col="black") + xlab("") + ylab("Editing level") +
+    scale_y_continuous(expand = c(0, 0))+
+    scale_x_continuous(expand = c(0, 0),breaks=(chrs$cumlen+round(chrs$length/2)),labels=factor(chrs$chr) )+ #+ theme(axis.text.x = element_blank(),axis.ticks.x = element_blank())
+    facet_wrap(~variable,ncol=1,scales = "free_y")+
+    scale_fill_brewer(palette = "Dark2")+scale_color_brewer(palette = "Dark2")+
+    geom_rect(data=rect1, aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax), fill="pink", alpha=0.3, inherit.aes = FALSE)+
+    gg_aes+ylim(0,1)+     
+    theme(legend.position = "bottom",legend.key = element_rect(fill=NA),legend.title = element_blank(),  
+          legend.text = element_text(colour="black", size = 15, face = "bold"),
+          strip.background = element_blank(),strip.text = element_text(size=15,colour = "black"),
+          plot.title = element_text(size = 16,hjust=0.5))+ 
+    guides(colour = guide_legend(override.aes = list(alpha=1,size=5)))+
+    ggtitle(label = paste("RNA editing level"),subtitle = "") + theme(plot.title = element_text(size = 16,hjust=0.5))
+  p
+
+```
+
+
+
+# RNA-edits and enhancer region annotations {.tabset .tabset-fade}
+- There are no podocyte-specific histone modification profiles available.
+- However, histone-modification and other TF profiles are available for kidney tissues of E14, E15, E16 and P0 stage from ENCODE database (https://www.encodeproject.org/matrix/?type=Experiment&status=released)
+- Chromatin state annotations derived from ChIP-seq of histone modifications performed by the laboratory of Bing Ren as part of the ENCODE Consortium, phase 3.
+- The chromHMM method was used to integrate ChIP-seq data from 8 histone modifications (H3K27ac, H3K27me3, H3K4me3, H3K4me2, H3K4me1, H3K9me3, H3K9ac, H3K36me3). 
+- In total, fifteen chromatin states were used to segment the genome, and these states were then grouped and colored to highlight predicted functional elements by the resource.
+
+- Chromatin states are as following:
+    * State 1 -       Dark Green - Promoter, Active (Pr-A)
+    * State 2 -       Light Green - Promoter, Weak (Pr-W)
+    * State 3 -       Light Grey - Promoter, Bivalent (Pr-B)
+    * State 4 -       Green - Promoter, Flanking Region (Pr-F)
+    * State 5 -       Bright Yellow - Enhancer, Strong TSS-distal (En-Sd)
+    * State 6 -       Bright Yellow - Enhancer, Strong TSS-proximal (En-Sp)
+    * State 7 -       Light Yellow - Enhancer, Weak (En-W)
+    * State 8 -       Dark Grey - Enhancer, Poised TSS-distal (En-Pd)
+    * State 9 -       Dark Grey - Enhancer, Poised TSS-proximal (En-Pp)
+    * State 10 -      Dark Blue - Transcription, Strong (Tr-S)
+    * State 11 -      Royal Blue - Transcription, Permissive (Tr-P)
+    * State 12 -      Light Blue - Transcription, Initiation (Tr-I)
+    * State 13 -      State 13 - Salmon - Heterochromatin, Polycomb-associated (Hc-P)
+    * State 14 -      Pink - Heterochromatin, H3K9me3-associated (Hc-H)
+    * State 15 -      White - No significant signal (Ns)
+- Additional details, please refer here (ref-8,9) 
+
+## Stringent enhancer definition
+- I define stringent chromatin state annotation as those regions that have the same chromatin state among E14, E15, E16 and P0 stages
+- Editing sites are annotated by the stringent chromatin states
+- Following heatmap shows editing levels across all 9 samples, grouped by their stringent chromatin states
+- There are not very many enhancer-annotated chromatin states
+- Please note: out of 2234 combined high-confidence editing events across Control,D7,D14 samples, only 1710 found stringent chromatin state annotations. The 947 events are displayed in the heatmap
+
+```{r, p34, echo=T,fig.width=8,fig.height=10}
+  load(paste0(DATADIR,"33hc_EditingLevelReport_Anno.RData"))
+  z <- imputed_edits
+  hlpr$id <- gsub(":T>C|:A>G","",hlpr$idx)
+  z <- z[match(hlpr$id,rownames(z)),]
+  hlpr$cHMM_Final <- ifelse(is.na(hlpr$cHMM_Final),as.character('-'),as.character(hlpr$cHMM_Final))
+  
+  z$HMM <-hlpr$cHMM_Final
+  z <- z[z$HMM!="-",]
+  partition = as.factor(z$HMM)
+  table(partition)
+  rr <-hlpr[hlpr$id%in%rownames(z),]
+  rr <- merge(rr,unique(hc_edits_anno[,c("id","ConsScore","hg19")]),by="id",all.x=T )
+  rr <- rr[match(rownames(z),rr$id),]
+  rr <- cbind(rr,z[,1:9])
+  rr <- rr[,!names(rr)%in%c("id","cHMM_P0","cHMM_E16","cHMM_E15","cHMM_E14")]
+  
+  rownames(z) <- NULL
+  col = colorRamp2(c(0, max(z[,1:9])), c("white","blue4"))
+  ord <- c("control_R1","control_R2","control_R3","D7_R1","D7_R2","D7_R3","D14_R1","D14_R2","D14_R3","HMM")
+  z <- z[,ord]
+  Heatmap(z[,1:9],column_title = "Editing Dynamics\nby chromatin state",name = "scale",col = col,cluster_columns = F,
+          split = partition, row_title_rot = 0,
+          row_title_gp = gpar(col = HMMCOLS,fontsize=16,fontface="bold"))
+  
+  
+  
+```
+
+
+
+## Enrichment
+- In this section, I assess whether RNA editing events are enriched in any given chromatin states
+- To this end, I use a set of 5000 randomly simulated editing event and assess the enrichment of editing events within any chromatin state using our observed RNA edits
+- This is done using hypergeometric test
+- Cyan color represents editing events enriched a given chromatin state compared to by chance. While the red color represents editing events depleted in a given chomatin state comapred to expected by chance.
+
+
+```{r, p34.1, echo=T,fig.width=6,fig.height=5}
+ load(file=paste0(DATADIR,"33hc_cHMM_pValEnrichment.RData"))
+ 
+ ggplot(cHMMEnrich,aes(x=Var1,y=p.val,fill=status))+geom_bar(stat = "identity",position = "dodge")+
+    coord_flip()+gg_aes+
+    ylab("P.value, -log10 scale")+xlab("")+
+   theme(legend.position = "bottom")+
+    scale_y_continuous(expand=c(0,0))
+
+```
+
+
+## Annotation by state
+- For each chromatin state, the genomic annotations of the editing sites are summarized using a bar plot below.
+
+```{r, p34.2, echo=T,fig.width=10,fig.height=6}
+  load(paste0(DATADIR,"33hc_EditingLevelReport_Anno.RData"))
+  
+  pl <- c()
+  pl <- rbind(pl, 
+    cbind(profile="control", data.frame(table(hlpr[hlpr$control>0,]$snpeff_uq,hlpr[hlpr$control>0,]$cHMM_Final))),
+    cbind(profile="D7", data.frame(table(hlpr[hlpr$D7>0,]$snpeff_uq,hlpr[hlpr$D7>0,]$cHMM_Final))),
+    cbind(profile="D14", data.frame(table(hlpr[hlpr$D14>0,]$snpeff_uq,hlpr[hlpr$D14>0,]$cHMM_Final)))
+  )
+  pl$profile <- factor(pl$profile,levels=c("control","D7","D14"))
+  pl <- pl[pl$Freq>0,]
+  names(pl)[2] <- "annotation"
+  
+  p1 <- ggplot(pl,aes(x=Var2,y=Freq,fill=annotation))+geom_bar(stat = "identity")+
+    facet_wrap(~profile)+
+    theme(axis.text.x = element_text(angle=90,vjust=0),
+          legend.position = "bottom",
+          legend.title = element_blank())+
+    scale_fill_brewer(palette = "Dark2")+
+    scale_y_continuous(expand =c(0,0))+
+    xlab("")+ylab("count")
+  p2 <- ggplot(pl,aes(x=Var2,y=Freq,fill=annotation))+geom_bar(stat = "identity",position = "fill")+
+    facet_wrap(~profile)+
+    theme(axis.text.x = element_text(angle=90,vjust=0),
+          legend.position = "bottom",
+          legend.title = element_blank())+
+    scale_fill_brewer(palette = "Dark2")+
+    scale_y_continuous(expand =c(0,0))+
+    xlab("")+ylab("fraction")
+  
+  grid.arrange(p1,p2,nrow=1)
+
+```
+
+
+
+## Stringent states - spreadsheet
+- Above displayed 1710 events are listed in the spreadsheet
+- Columns:
+    * idx (id and edits)
+    * HMM  (chromatin state annotation)
+    * known  (whether the event is known,1 or novel 0)
+    * repeats (which repeat the editing event overlaps with)
+    * snpeff_uq (unique genomic annotation of the edit)
+    * aaswap (whether the edit leads to missense or synonymous mutation)
+    * ConsScore (30-species conservation score, 1 being conserved in all, 0 being unique to mouse)
+    * hg19 (whether the edit is conserved in humans)
+    * D7_R1 D7_R2 D7_R3 D14_R1 D14_R2 D14_R3 control_R3 control_R2 control_R1 (editing levels)
+
+```{r, p35, echo=T,fig.width=8,fig.height=6}
+  z <- cbind(z,rr[,c("idx","known","repeats","snpeff_uq","aaswap","ConsScore","hg19")])
+  z <- z[,c("idx", "HMM", "known", "repeats","snpeff_uq", "aaswap", "ConsScore", "hg19",
+            "D7_R1", "D7_R2", "D7_R3", "D14_R1", "D14_R2", "D14_R3", "control_R3", 
+            "control_R2", "control_R1")]
+  datatable(z, extensions = 'Buttons',options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip', 
+                   buttons = c('excel', "csv")))
+```
+
+
+# Correlation b/w expression and editing
+- Aim: to assess if highly expressed genomic loci tend to have high levels of RNA-editing. 
+- If the correlation exists, then one can interprete RNA-polII-mediated transcription concurrently brings about RNA-editing
+- Editing is observed in genomic regions without known transcriptional units -suggesting that large chunk of the genome is transcribed.
+- For regions other than well-defined transcriptome, we are limited by the gene-expression levels. Hence, I decided to use sequencing read depths as a surrogate of expression of the genomic locus. 
+- I merged all 3 replicates per condition and counted numbers of reads supporting editing v/s total numbers of reads at the sites of RNA editing
+- A correlation scatter plot is provided below. 
+
+```{r, p36, echo=T,fig.width=12,fig.height=6}
+ load(paste0(DATADIR,"33hc_readDepth_EditLevels.RData"))
+   
+  oDepth$value <- oDepth$alt/oDepth$depth
+    oDepth %>%
+      ggplot(aes(log2(depth+1), value)) +geom_point() +
+      stat_bin_hex(geom="point", aes(color=log2(..count..)), binwidth=c(.05,.05), size=1, shape=20, stroke=0)+
+      scale_color_viridis(option="inferno",direction = 1)+
+      geom_smooth(method = "lm") +facet_wrap(~name,nrow = 1)+gg_aes+
+      xlab("expression level, (read depth on log2 scale)")+ylab("editing level")+
+    stat_cor(method = "pearson", size=5,col="red",label.sep = "\n",
+             label.x.npc = "right", label.y.npc = "top")
+ 
+```
+
+- A linear regression clearly suggests overall absence of correlation between expression (as indicated by sequencing read depths) and level of editing.
+
+
+
+# Motif analyses at the editing sites
+- Several studies in the past have suggested RNA-binding motif for Adar1 - such that the editing event likely occurs at the motif sites on RNA. 
+- To assess whether our data suggests presence of a similar motif, I predicted motifs on 25bp RNA transcripts (genomic context, i.e. on premature miRNA) centered on edited base using meme (ref-10). 
+- Following figure summarizes occurances of top 3 motifs in Control, D14 and D7 samples. Total numbers of sequences used for motif prediction are reported next to the motif. 
+- A few positions for the top motifs across samples seem to be similar, though the total motifs are not entirely similar. 
+- To test whether the top motif from one condition is also present in other two conditions, I decided to use fimo program from MEME suite
+- Top motifs from each condition are labelled as 
+    * control_motif
+    * D7_motif and 
+    * D14_motif
+- Using a P-value threshold, the number of sequences carrying each of motifs in control, D7 and D14 samples are identified and displayed in the barplot as proportion of total sequences (or editing sites) in each sample. 
+- As we can appreciate, though the motifs look visiably distinct, they do occur in all samples (i.e. control,D7,D14) when the thresholds are relaxed.
+- Though, this analysis identifies some motifs, I am not entirely convinced by the analysis - as
+    * THe thresholds used to define motif can modify the results
+    * Though I was expecting a fairly similar looking motif to pop-out for all conditions, that is not the case.
+
+- (I do not assess this part, since it does not add much value)
+
+
+- Following chart summarizes motifs observed at editing sites, when the sites are classified into various genomic annotations.
+
+![Motif analyses](A:/work/Kreidberg lab/Valerie/PAPER/FIG/motifs_3by3HC_GenomicAnno.png)
+
+
+- Instead, I did the same analysis of findng motif, but without segragating the sequences into control, D7 or D14 groups. 
+- In total, 2156 sequences (corresponding to 2156 editing sites collectively observed across control, D7 and D14) were used for predicting sequences using MEME suite. 
+- Following motif was found in 356/2156 sites
+
+
+![Motif analyses](A:/work/Kreidberg lab/Valerie/PAPER/FIG/motifs_ALLSeq_3by3HC.png)
+
+# RNA-editing and Wt1 peaks
+- Aim: To test if the editing is correlated to the Wt1 peaks
+- Approach: I used the Wt1 peaks called on podocytes by Lucy (joint project by Sandrine & Lucy) at Control, D9 and D14 after Adr injections. The study design here is slighly different from our data
+- Here, I approximate the Wt1 data for D9 to our D7 data. 
+- The peaks were called on mm9 assembly. Using UCSC liftover, I converted the peak coordinates to mm10 (>98% success rate)
+- I plan following two analyses on the data
+
+1. Whether RNA editing events are clustered proximal to the Wt1 peaks?
+- To investigate this systematically, calculated the distance between the RNA editing locus and the nearest Wt1 peak. 
+- Next, I simulated 5000 random genomic loci and calculated their distances to the Wt1 as a control
+- Using empirical cumulative distribution, I plot the distances obtained above with respect to the proportion of events
+- If the RNA-editing sites cluster close to the Wt1 peaks, then we should observe shift in the curve to the left of the random events
+- Following plot summarizes it -suggesting non-random distribution of RNA-editing sites with slight preference towards Wt1 peaks. 
+- Nevertheless, the median distance between Wt1 peak and RNA editing remains more than 10kb - control (12kb), D7 (11kb) and D14 (46kb).
+
+```{r, p37, echo=T,fig.width=12,fig.height=5,warning=F}
+  load(paste0(DATADIR,"33_EditingLevelReport_Anno.RData"))
+  load(paste0(DATADIR,"33_DRE_DE_matrix.RData"))
+  load(paste0(DATADIR,"33_Distance2Wt1Peaks_plotDF.RData"))
+  
+  rd$set <- gsub("edits","RNA-edit site",rd$set)
+  rd$variable <- factor(rd$variable,levels=c("Control","D7","D14"))
+  
+  ggplot(rd, aes(value,col=set)) + stat_ecdf(geom = "point")+ 
+    scale_x_log10()+facet_wrap(~variable,nrow = 1,scales = "free_x")+
+    geom_vline(xintercept = 1e4,col="gray")+
+    xlab("distance to the Wt1 peak, log10")+ ylab("proportion of events")+
+    theme_minimal()+gg_aes+
+    theme(legend.position = "bottom")
+
+```
+
+
+- EDCF plot for editing events grouped by their genomic annotations
+
+```{r, p37.1, echo=T,fig.width=9,fig.height=15}
+  ggplot(rd, aes(value,col=set)) + stat_ecdf(geom = "point")+ 
+    scale_x_log10()+facet_wrap(~anno+variable,nrow = 5)+
+    geom_vline(xintercept = 1e4,col="gray")+
+    xlab("distance to the Wt1 peak, log10")+ ylab("proportion of events")+
+    theme_minimal()+gg_aes+
+    theme(legend.position = "bottom")
+  
+```
+
+
+2. Whether the editing changes are associated proximity to the Wt1 peaks
+- Here, I try to assess whether presence- or absence of the Wt1 peaks is associated with corresponding change in the editing levels. 
+- Change in RNA editing with respect to control (i.e. Control-D7) is plotted against the distance of Wt1 peaks to the RNA-editing site in control
+- Above approach is justifyable as we have more number of editing events in control compared to D7 and D14. 
+- Hence, if there is any functional relationship between the two values, we should be able to pick it up. 
+- Scatter plot analyses suggest that there is no functional relationship between the Wt1 peaks and the editing level changes. 
+- It is possible to perform more sophisticated analysis here - where instead of distance to Wt1 peaks, one can compare the changes in Wt1 peak intensities. However, given an initial poor correlation, I feel that there may not be any strong correlation in such analysis either.
+
+
+```{r, p38, echo=T,fig.width=10,fig.height=5}
+  require(viridis)  
+myplfunc <- function(r,x,y,tit){
+    q <- ggplot(r, aes(r[,x], log10(r[,y])) ) +geom_point() +
+      stat_bin_hex(geom="point", aes(color=log2(..count..)), binwidth=c(.05,.05), size=1, shape=20, stroke=0)+
+      scale_color_viridis(option="inferno",direction = 1)+
+      geom_smooth(method = "lm") +gg_aes+
+      ggtitle(tit)+
+      xlab(x)+ylab("distance to Wt1 peak in Control\n (log10)")+
+      stat_cor(method = "pearson", size=5,col="red",label.sep = "\n",
+               label.x.npc = "right", label.y.npc = "top")
+    q
+  }
+  
+  pllist <- list()
+  r <- res[res$comparison=="D7_control",]
+  #r <- merge(r,hlpr[,c("idx","Control_Wt1","D9_Wt1","D14_Wt1" )],by="idx")
+  pllist[[1]] <- myplfunc(r,"change","Control_Wt1","D7-Control")
+  r <- res[res$comparison=="D14_control",]
+  #r <- merge(r,hlpr[,c("idx","Control_Wt1","D9_Wt1","D14_Wt1" )],by="idx")
+  pllist[[2]] <- myplfunc(r,"change","Control_Wt1","D14-Control")
+  
+  grid.arrange(grobs=pllist,nrow=1)
+
+```
+
+
+- Taken together, the analysis suggests that RNA-editing events tend to occur close to the Wt1 than expected by chance. However, the distance to Wt1 peak does not show clear functional outcome. 
+
+
+
+
+# References
+1. John D, Weirick T, Dimmeler S, Uchida S. RNAEditor: easy detection of RNA editing events and the introduction of editing islands.
+Briefings in Bioinformatics 2016. [PMID: 27694136]
+2. Langmead B, Salzberg S. Fast gapped-read alignment with Bowtie 2. Nature Methods. 2012, 9:357-359.
+3. STAR: ultrafast universal RNA-seq aligner, Alexander Dobin; Bioinformatics 29(1):15-21 (2013)
+4. https://github.com/gatoravi/mpileup2readcounts
+5. https://github.com/stefvanbuuren/mice
+6. A program for annotating and predicting the effects of single nucleotide polymorphisms, SnpEff: SNPs in the genome of Drosophila melanogaster strain w1118; iso-2; iso-3., Cingolani P, Platts A, Wang le L, Coon M, Nguyen T, Wang L, Land SJ, Lu X, Ruden DM. Fly (Austin). 2012 Apr-Jun;6(2):80-92. PMID: 22728672
+7. https://useast.ensembl.org/info/docs/tools/vep/index.html
+8. Gorkin et al. An atlas of dynamic chromatin landscapes in the developing mouse fetus. Nature, In Press.
+(pre-print: doi: https://doi.org/10.1101/166652)
+9 .Ernst J, Kellis M. ChromHMM: automating chromatin-state discovery and characterization. Nat Methods. 2012 Feb 28;9(3):215-6. PMID: 22373907; PMC: PMC3577932
+10. Timothy L. Bailey, Mikael Bodén, Fabian A. Buske, Martin Frith, Charles E. Grant, Luca Clementi, Jingyuan Ren, Wilfred W. Li, William S. Noble, "MEME SUITE: tools for motif discovery and searching", Nucleic Acids Research, 37:W202-W208, 2009.
+
+
+
+# Sessioninfo
+```{r, sessioninfo, echo=T}
+sessionInfo()
+```

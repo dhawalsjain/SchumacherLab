@@ -1,0 +1,261 @@
+---
+title: "RNA Structure changes due to editing"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    highlights: pygments
+    self_contained: true
+    number_sections: yes
+    theme: readable
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+  word_document:
+    toc: yes
+---
+
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(
+  echo=T, # shows code
+  cache=F,message = F, warning = F
+)
+set.seed(31)
+```
+
+```{r, Functions, echo=T}
+rm(list=ls())
+source("A:/work/scripts/SchumacherLab/vars.R")
+source("A:/work/scripts/SchumacherLab/functions.R")
+
+```
+
+
+# Structure comparison of the RNA-hairpins 
+- Secondary structure predicted using RNAfold software (ref-1)
+- Color code on the figure can be read as high base pairing likelyhood
+- 181 clustered events across genic regions are considered in the analyses
+- Header carries following information
+    * Gene name
+    * Annotation of the editing cluster
+    * Comparison in the Differential editing analysis (D7 vs control or D14 vs control)
+    * Number of sites in the cluster
+    * Median log2FC in editing level
+    * FDR value
+    * 1st column in the plot is the reference sequence structure
+    * 2nd column represents structure upon clustered editing of pre-mRNAs
+
+# spreadsheet-report
+
+```{r, p1, echo=T,fig.width=8,fig.height=6}
+ myf<- function(path="A:/work/Kreidberg lab/Valerie/PAPER/PSVisulaization/Ref/DRE_Clustered_RefSeqs_Genomic_OUT.fa"){
+    ref <- read.delim(path,header=F,stringsAsFactors = F)
+    rh <-  data.frame(id=ref[seq(1,1086,6),])
+    rh$energy <- ref[seq(3,1086,6),]
+    rh$energy <- gsub(".*?\\(","",rh$energy)
+    rh$energy <- gsub("\\)","",rh$energy)
+    rh$energy <- as.numeric(rh$energy)
+    rh$id <- gsub(">","",rh$id)
+    rm(ref)
+    rh
+  }
+  
+  ref <- myf(path="A:/work/Kreidberg lab/Valerie/PAPER/PSVisulaization/Ref/DRE_Clustered_RefSeqs_Genomic_OUT.fa")
+  alt <- myf(path="A:/work/Kreidberg lab/Valerie/PAPER/PSVisulaization/Alt/DRE_Clustered_AltSeqs_Genomic_OUT.fa")
+  names(ref)[2] <- "ref_energy"
+  names(alt)[2] <- "alt_energy"
+  
+  rh <- merge(ref,alt,by="id")
+  rh$pic <- paste0(gsub("\\|","_",rh$id),"_rel.jpg")
+  
+  rh$gene <- gsub("\\|\\S*","",rh$id)
+  rh$id <- gsub("^\\S*?\\|","",rh$id)
+  rh$ncluster <- gsub("\\|\\S*","",rh$id)
+  rh$id <- gsub("^\\S*?\\|","",rh$id)
+  rh$FDR <- gsub("\\|\\S*","",rh$id)
+  rh$id <- gsub("^\\S*?\\|","",rh$id)
+  rh$Anno <- gsub("\\|\\S*","",rh$id)
+  rh$id <- gsub("^\\S*?\\|","",rh$id)
+  rh$medainChange <- gsub("\\|\\S*","",rh$id)
+  rh$id <- gsub("^\\S*?\\|","",rh$id)
+  rh$comparison <- gsub("\\|\\S*","",rh$id)
+  rh$id <- gsub("^\\S*?\\|","",rh$id)
+  rh$id <- NULL
+  
+  rh <- rh[,c("gene", "ncluster", "FDR", "Anno", "medainChange", "comparison","ref_energy", "alt_energy", "pic")]
+
+  
+  rh$score <- round(abs(rh$ref_energy- rh$alt_energy)*100/abs(rh$ref_energy),2)
+  rh <- rh[order(rh$score,decreasing = T),]
+  
+    load(paste0(DATADIR,"DEExpression_DESeq2.RData"))
+  ggg <- out0[[1]][,c("id","geneStart","geneEnd","gene")]
+  ggg$length <- abs(ggg$geneStart-ggg$geneEnd)
+  ggg <- ggg[,c("id","length","gene")] %>% unique
+  cnt <- DESeq2::counts(outC[[2]],normalized=F) %>% as.data.frame
+  cnt$id <- rownames(cnt)
+  cnt <- merge(cnt,ggg,by="id",all.x=T)
+  rownames(cnt) <- cnt$id
+  cnt$id <- NULL
+  cnt[,1:9] <- cnt[,1:9]*1000/cnt$length
+  cnt$length <- NULL
+  cnt[,1:9] <- apply(cnt[,1:9],2,function(x){round(x*1e6/sum(x),2)})
+  cnt <- as.data.frame(cnt)
+  names(cnt)[1:9] <- unname(sampl[names(cnt)[1:9]])
+  cnt$D7 <- round(apply(cnt[,1:3],1,gmean),2)
+  cnt$D14 <- round(apply(cnt[,4:6],1,gmean),2)
+  cnt$Control <- round(apply(cnt[,7:9],1,gmean),2)
+  cnt <- cnt[,c("gene","Control","D7","D14")]
+  cnt$gene_id <- rownames(cnt)
+  cnt <- cnt[,c("gene","gene_id","Control","D7","D14")]
+  cnt[,3:5] <- round(log2(cnt[,3:5]+1),2)
+  names(cnt)[3:5] <- paste0(names(cnt[3:5]),"_log2Expn")
+  rm(out0,out1,outC,ggg)
+
+  
+  rh1 <- rh[,c("gene", "ncluster", "FDR", "Anno", "medainChange", "comparison", 
+"ref_energy", "alt_energy", "score")]
+  names(rh1) <- c("gene", "EditsInClusters", "FDR_EditLevels", "Anno", "medainEditChange", "comparison", 
+                "ref_energy", "alt_energy", "score")
+  rh1 <- merge(rh1, cnt,by="gene",all.x=T)
+
+
+  datatable(rh1, extensions = 'Buttons',options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip', 
+                                                     buttons = c('excel', "csv")))
+  
+  
+```
+
+# Figures
+- Here, I present the final figure that can be used for paper
+- I use Polrf3 as an example. The premRNA of this gene is edited in control samples, but not in D7 and D14.
+- The structure of edited mRNA is presented for control, D7 and D14 condition, on top
+- While, the paired boxplot at the bottom summarizes changes in free-energy of all structures.
+- Out of 181 (95 for D7 and 86 for D14) instances, I selected on those where the editing is observed in the control samples (in clusters) but not in D7 or D14 samples. 
+- This makes sense as we are interested in seeing whether editing leads to stabilization of the premRNAs
+- Using the filter, we are left with 75 (out of 95) and 83 (out of 86) structures/instances at D7 and D14
+- For the remaining structures i.e. 20/95 at D7 and 3/86 at D14, the editing levels are lower in control compared to D7 and D14
+- I plotted changes in energy for premRNA structures with respect to their structures observed in control samples. 
+- The structures in control are therefore based out at 0 and the changes are quantified against the baseline (red dotted line)
+- As you can see, overall changes suggest stabilization of the RNA structures (boxes moving below 0-line in D7 and D14)
+
+
+
+```{r, p2, echo=T,fig.width=8,fig.height=8}
+  myf<- function(path="A:/work/Kreidberg lab/Valerie/PAPER/PSVisulaization/Ref/DRE_Clustered_RefSeqs_Genomic_OUT.fa"){
+    ref <- read.delim(path,header=F,stringsAsFactors = F)
+    rh <-  data.frame(id=ref[seq(1,1086,6),])
+    rh$energy <- ref[seq(3,1086,6),]
+    rh$energy <- gsub(".*?\\(","",rh$energy)
+    rh$energy <- gsub("\\)","",rh$energy)
+    rh$energy <- as.numeric(rh$energy)
+    rh$id <- gsub(">","",rh$id)
+    rm(ref)
+    rh
+  }
+  
+  ref <- myf(path="A:/work/Kreidberg lab/Valerie/PAPER/PSVisulaization/Ref/DRE_Clustered_RefSeqs_Genomic_OUT.fa")
+  alt <- myf(path="A:/work/Kreidberg lab/Valerie/PAPER/PSVisulaization/Alt/DRE_Clustered_AltSeqs_Genomic_OUT.fa")
+  names(ref)[2] <- "ref_energy"
+  names(alt)[2] <- "alt_energy"
+  rh <- merge(ref,alt,by="id")
+  rh$pic <- paste0(gsub("\\|","_",rh$id),"_rel.jpg")
+  rh$gene <- gsub("\\|\\S*","",rh$id)
+  rh$id <- gsub("^\\S*?\\|","",rh$id)
+  rh$ncluster <- gsub("\\|\\S*","",rh$id)
+  rh$id <- gsub("^\\S*?\\|","",rh$id)
+  rh$FDR <- gsub("\\|\\S*","",rh$id)
+  rh$id <- gsub("^\\S*?\\|","",rh$id)
+  rh$Anno <- gsub("\\|\\S*","",rh$id)
+  rh$id <- gsub("^\\S*?\\|","",rh$id)
+  rh$medainChange <- gsub("\\|\\S*","",rh$id)
+  rh$id <- gsub("^\\S*?\\|","",rh$id)
+  rh$comparison <- gsub("\\|\\S*","",rh$id)
+  rh$id <- gsub("^\\S*?\\|","",rh$id)
+  rh$id <- NULL
+  rh <- rh[,c("gene", "ncluster", "FDR", "Anno", "medainChange", "comparison","ref_energy", "alt_energy", "pic")]
+  rhx <- rh
+  
+  load(paste0(DATADIR,"DRE_DE_matrix.RData"))
+  r1 <- res[res$comparison=="D7_control" & res$clustered>0 & !is.na(res$tracking_id),]
+  r1 <- r1[r1$D7<r1$control,]
+  rh1 <- rh[rh$comparison=="D7_control" & rh$gene%in%r1$gene,]
+  r1 <- res[res$comparison=="D14_control" & res$clustered>0 & !is.na(res$tracking_id),]
+  r1 <- r1[r1$D14<r1$control,]
+  rh2 <- rh[rh$comparison=="D14_control" & rh$gene%in%r1$gene,]
+  rh <- rbind(rh1,rh2)
+  rm(rh1,rh2,r1)  
+  
+  rh <- rh[,c("gene","comparison","ref_energy","alt_energy")]
+  #rh <- rh[rh$ref_energy>rh$alt_energy,]
+  rh$comparison <-gsub("_control","",rh$comparison)
+  rh <- reshape2::dcast(rh,gene+ref_energy ~ comparison, value.var = "alt_energy")
+  names(rh)[2] <- "control"
+  
+  rh1 <- rh[,c(1,2,4)]
+  rh1 <- rh1[complete.cases(rh1),]
+  rh1[,3] <- ((rh1[,3]-rh1[,2])*100)/abs(rh1[,2])
+  rh1[,2] <- 0
+  rh1 <- melt(rh1,measure.vars = names(rh1)[2:3])
+  p4 <- ggpaired(rh1, x = "variable", y = "value",color = "variable", 
+                 add = "jitter",line.color = "gray", line.size = 0.4)+gg_aes+
+    scale_color_manual(values=cols)+scale_fill_manual(values=cols)+
+    geom_hline(yintercept = 0,col="red",linetype="dotted",size=1.2)+
+    stat_compare_means(label = "p.signif", method = "t.test",paired = T,ref.group = "control")+
+    xlab("")+ylab("% change in energy\n[ (Control-D7)/Control ]")
+  
+  rh1 <- rh[,c(1,2,3)]
+  rh1 <- rh1[complete.cases(rh1),]
+  rh1[,3] <- ((rh1[,3]-rh1[,2])*100)/abs(rh1[,2])
+  rh1[,2] <- 0
+  rh1 <- melt(rh1,measure.vars = names(rh1)[2:3])
+  p5 <- ggpaired(rh1, x = "variable", y = "value",color = "variable", 
+            add = "jitter",line.color = "gray", line.size = 0.4)+gg_aes+
+    scale_color_manual(values=cols)+scale_fill_manual(values=cols)+
+    geom_hline(yintercept = 0,col="red",linetype="dotted",size=1.2)+
+    stat_compare_means(label = "p.signif", method = "t.test",paired = T,ref.group = "control")+
+    xlab("")+ylab("% change in energy\n[ (Control-D14)/Control ]")
+  
+  p1 <- ggdraw() + draw_image(paste0("A:/work/Kreidberg lab/Valerie/PAPER/PSVisulaization/Ref/",rhx$pic[119]),scale = 1)+
+    ggtitle("control\nPolrf3")+theme(plot.title = element_text(hjust = 0.5))
+  p2 <- ggdraw() + draw_image(paste0("A:/work/Kreidberg lab/Valerie/PAPER/PSVisulaization/Alt/",rhx$pic[120]),scale = 1)+  
+    ggtitle("Day-7\nPolrf3")+theme(plot.title = element_text(hjust = 0.5))
+  p3 <- ggdraw() + draw_image(paste0("A:/work/Kreidberg lab/Valerie/PAPER/PSVisulaization/Alt/",rhx$pic[119]),scale = 1)+  
+    ggtitle("Day-14\nPolrf3")+theme(plot.title = element_text(hjust = 0.5))
+  
+  lay <- rbind(c(1,1,2,2,3,3),
+               c(4,4,4,5,5,5))
+  grid.arrange(p1,p2,p3,p4,p5,heights=c(5,4), layout_matrix = lay)
+  
+
+
+```
+
+
+# References
+1. Mathews DH, Disney MD, Childs JL, Schroeder SJ, Zuker M, Turner DH. (2004) Incorporating chemical modification constraints into a dynamic programming algorithm for prediction of RNA secondary structure. Proc Natl Acad Sci U S A 101(19):7287-92.
+
+
+
+# Sessioninfo
+```{r, sessioninfo, echo=T}
+sessionInfo()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

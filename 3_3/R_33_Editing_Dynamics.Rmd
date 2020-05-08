@@ -1,0 +1,665 @@
+---
+title: "Differenial RNA Editing"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    highlights: pygments
+    self_contained: true
+    number_sections: yes
+    theme: readable
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+  word_document:
+    toc: yes
+---
+
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(
+  echo=T, # shows code
+  cache=F,message = F, warning = F
+)
+set.seed(31)
+```
+
+```{r, Functions, echo=T}
+rm(list=ls())
+source("A:/work/scripts/SchumacherLab/vars.R")
+source("A:/work/scripts/SchumacherLab/functions.R")
+```
+
+
+# Differential RNA Editing (DRE) {.tabset .tabset-fade}
+- I used imputed data (with 2/3 replicate) edits per condition
+- Log2 fold changes between control and D7 or control and D14 were modelled using a linear model from Limma package (ref-1)
+- Differential Editing sites (DRE) were defined at 5% FDR
+- NOTE: Control sample has a lot of edits (at least 2 times that of D14 and D7). Thus large number of points in the volcano plot are on the negative X-axis
+
+## Volcano plots 
+```{r, p0, echo=T,fig.width=8,fig.height=4}
+  load(paste0(DATADIR,"33_EditingLevelReport_Anno.RData"))
+  load(paste0(DATADIR,"33_DRE_DE_matrix.RData"))
+  load(paste0(DATADIR,"33_Spreadsheet_HCEditsWithCompleteAnno.RData"))
+  res$col <- ifelse(res$adj.P.Val<0.05,0,1)
+  
+  cn <- read.delim(paste0(DATADIR,"SnpEffector.txt"),header=T,stringsAsFactors = F)
+  cn$Location <- gsub("-\\S*","",cn$Location)
+  cn$REF <- ifelse(cn$Allele=="C",as.character("T"),as.character("G"))
+  cn$idx <- paste0(cn$Location,":",cn$REF,">",cn$Allele)
+  cn <- cn[,c("Consequence","SIFT","idx")] %>% unique
+  cn$SIFT <- gsub("\\(\\S*\\)","",cn$SIFT)
+  cn$SIFT <- gsub("deleterious_low_confidence|tolerated_low_confidence","tolerated",cn$SIFT)
+  cn <- cn[,c("idx","SIFT")] %>% unique
+  cn <- cn[cn$SIFT!="-",]
+  res <- merge(res,cn,by="idx",all.x=T)
+   res$comparison <- factor(res$comparison,levels=c("D7_control","D14_control"))
+ 
+  ggplot(res,aes(x=change,y=-log10(adj.P.Val),col=factor(col)))+geom_point(size=2,alpha=0.5)+
+    facet_wrap(~comparison,nrow=1,scales = "free")+
+    scale_color_brewer(palette = "Dark2",direction = -1)+
+    theme_bw()+theme(legend.position = "none")+gg_aes+
+    xlab("Editing change")+ylab("FDR, -log10")
+
+```
+
+## sheet (D7 v/s control)
+- idx = editing locus and edited base
+- known = Novel/Known?
+- repeat = Whether in genomic repeats?
+- snpeff_uq = genomic annotation. Please note that the annotation has received following priority
+    * missense > synonymous > splice > 3_prime_UTR > 5_prime_UTR > intron > intergenic_region
+- aaswap = Whther leads to AA change?
+- D9_Wt1/D14_Wt1/Control_Wt1 = distance to nearest Wt1 peak at respective time points
+- cHMM_final = chromatin HMM state 
+- Expression values : geometric mean of expression (FPKM) on log2 scale
+- Editing levels: Geometric means of editing levels across 3 replicates
+- ConsScore = 30species multiple sequence alignment probability (1= highly conserved, 0=unique in mouse)
+- UCNE name/ID = ultraconserved enhancer name and ID
+- hg19 = whether the editing site is conserved in human
+- clusrd? = whether the site is clustered in the given condition (1= yes, 0 = no)
+- log2FC,EditLevel = log2fold change for editing levels
+- FDR_editChange = FDR associated with editing level change
+- (D7-control) or (D14-control) = change in editing levels
+- FDR_expnChange = FDR associated with expression changes
+- log2FC,D7/control or log2FC,D14/control = log2 of the expression change value
+
+```{r, p1, echo=T,fig.width=8,fig.height=6}
+  
+  r1 <- res[res$adj.P.Val<0.05 & res$comparison=="D7_control",]
+  r1 <- r1[,c("idx", "logFC", "adj.P.Val","change", "comparison","expn_fdr", "expn_l2fc","SIFT")] %>% unique()
+  names(r1) <- c("idx", "log2FC,EditLevel", "FDR_editChange","(D7-control)", "comparison","FDR_expnChange", "log2FC,D7/control","SIFT")
+  r1 <- merge(r1,SPN,by="idx")
+  r1 <- r1[,c("idx","comparison", "log2FC,EditLevel", "FDR_editChange", "(D7-control)", 
+              "known", "repeats", "gene", "gene_id", "biotype", "snpeff_uq", "Control_edit", 
+              "D7_edit", "D14_edit", "Control_log2Expn", "D7_log2Expn", "D14_log2Expn",
+              "FDR_expnChange", "log2FC,D7/control", 
+              "Control_Wt1", "D9_Wt1", "D14_Wt1", "aaswap", "UCNE_name", "UCNE_ID", 
+              "cHMM_Final", "ConsScore", "hg19", "clusrd_in_Control", "clusrd_in_D7", 
+              "clusrd_in_D14","SIFT","GOAnno","link")]
+
+datatable(r1, extensions = 'Buttons',options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip', 
+                   buttons = c('excel', "csv")))
+
+``` 
+
+## sheet (D14 v/s control)
+- idx = editing locus and edited base
+- known = Novel/Known?
+- repeat = Whether in genomic repeats?
+- snpeff_uq = genomic annotation. Please note that the annotation has received following priority
+    * missense > synonymous > splice > 3_prime_UTR > 5_prime_UTR > intron > intergenic_region
+- aaswap = Whther leads to AA change?
+- D9_Wt1/D14_Wt1/Control_Wt1 = distance to nearest Wt1 peak at respective time points
+- cHMM_final = chromatin HMM state 
+- Expression values : geometric mean of expression (FPKM) on log2 scale
+- Editing levels: Geometric means of editing levels across 3 replicates
+- ConsScore = 30species multiple sequence alignment probability (1= highly conserved, 0=unique in mouse)
+- UCNE name/ID = ultraconserved enhancer name and ID
+- hg19 = whether the editing site is conserved in human
+- clusrd? = whether the site is clustered in the given condition (1= yes, 0 = no)
+- log2FC,EditLevel = log2fold change for editing levels
+- FDR_editChange = FDR associated with editing level change
+- (D7-control) or (D14-control) = change in editing levels
+- FDR_expnChange = FDR associated with expression changes
+- log2FC,D7/control or log2FC,D14/control = log2 of the expression change value
+
+```{r, p2, echo=T,fig.width=8,fig.height=6}
+  r1 <- res[res$adj.P.Val<0.05 & res$comparison=="D14_control",]
+  r1 <- r1[,c("idx", "logFC", "adj.P.Val","change", "comparison","expn_fdr", "expn_l2fc","SIFT")] %>% unique()
+  names(r1) <- c("idx", "log2FC,EditLevel", "FDR_editChange","(D14-control)", "comparison","FDR_expnChange", "log2FC,D14/control","SIFT")
+  r1 <- merge(r1,SPN,by="idx")
+  r1 <- r1[,c("idx","comparison", "log2FC,EditLevel", "FDR_editChange", "(D14-control)", 
+              "known", "repeats", "gene", "gene_id", "biotype", "snpeff_uq", "Control_edit", 
+              "D7_edit", "D14_edit", "Control_log2Expn", "D7_log2Expn", "D14_log2Expn",
+              "FDR_expnChange", "log2FC,D14/control", 
+              "Control_Wt1", "D9_Wt1", "D14_Wt1", "aaswap", "UCNE_name", "UCNE_ID", 
+              "cHMM_Final", "ConsScore", "hg19", "clusrd_in_Control", "clusrd_in_D7", 
+              "clusrd_in_D14","SIFT","GOAnno","link")]
+
+datatable(r1, extensions = 'Buttons',options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip', 
+                   buttons = c('excel', "csv")))
+
+``` 
+
+# Editing dynamics {.tabset .tabset-fade}
+- In this section, I classify the editing events based on their genomic features to assess where the differential edits are happening in control, D7 and D14 samples 
+- Overedited in the tab head suggests that the sites are overedited in either D7 or D14 with respect to control
+
+## Genomic feature (Overedited)
+```{r, p3, echo=T,fig.width=5,fig.height=6}
+  r1 <- res[res$adj.P.Val<0.05,]
+  r1$clustered <- ifelse(r1$clustered==0,as.character("loner"), as.character("clustered"))
+  
+  qq <- c()
+  for(prof in levels(as.factor(r1$comparison))) {
+    qwe <- r1[r1$comparison==prof & r1$logFC >0,]
+    qq <- rbind(qq,
+               data.frame(profile=prof, data.frame(table(qwe$snpeff_uq)),total=nrow(qwe),chnge="up") )
+    qwe <- r1[r1$comparison==prof & r1$logFC <0,]
+    qq <- rbind(qq,
+                data.frame(profile=prof, data.frame(table(qwe$snpeff_uq)),total=nrow(qwe),chnge="down") )
+    rm(qwe)
+  }
+  names(qq)[2:3] <- c("category","size")
+  qq$category <- gsub("splice","splice_region",qq$category)
+  qq$category <- gsub("_prime_","'",qq$category)
+  qq$category <- gsub("_region","",qq$category)
+  qq <- data.table(qq)
+  qq <- qq[,totsize:=sum(size),by=list(profile,chnge)]
+  qq <- as.data.frame(qq)
+  qq$perc <- round(qq$size*100/qq$totsize,2)
+  
+    
+  ggplot(qq[qq$chnge=="up",], aes(y=perc, x=category,fill=category,alpha=0.2)) + geom_bar(    stat="identity",position="dodge")+
+    scale_fill_brewer(palette = "Dark2")+
+    facet_wrap(~profile,nrow = 2)+coord_flip()+
+    geom_hline(yintercept = 0,col="black")+
+    theme_bw()+gg_aes+ggtitle("overedited in D7 or D14")+
+    xlab("")+ylab("% of total DRE sites")
+
+```
+
+## Genomic feature (Underedited)
+```{r, p4, echo=T,fig.width=5,fig.height=6}
+  ggplot(qq[qq$chnge=="down",], aes(y=perc, x=category,fill=category,alpha=0.2)) + geom_bar(    stat="identity",position="dodge")+
+    scale_fill_brewer(palette = "Dark2")+
+    facet_wrap(~profile,nrow = 2)+coord_flip()+
+    geom_hline(yintercept = 0,col="black")+
+    theme_bw()+gg_aes+ggtitle("underedited in D7 or D14")+
+    xlab("")+ylab("% of total DRE sites")
+
+```
+
+## Repeats (Overedited)
+```{r, p5, echo=T,fig.width=5,fig.height=6}
+  qq <- c()
+  for(prof in levels(as.factor(r1$comparison))) {
+    qwe <- r1[r1$comparison==prof & r1$logFC >0,]
+    qq <- rbind(qq,
+               data.frame(profile=prof, data.frame(table(qwe$repeats)),total=nrow(qwe),chnge="up") )
+    qwe <- r1[r1$comparison==prof & r1$logFC <0,]
+    qq <- rbind(qq,
+                data.frame(profile=prof, data.frame(table(qwe$repeats)),total=nrow(qwe),chnge="down") )
+    rm(qwe)
+  }
+  names(qq)[2:3] <- c("category","size")
+  qq$category <- gsub("splice","splice_region",qq$category)
+  qq$category <- gsub("_prime_","'",qq$category)
+  qq$category <- gsub("_region","",qq$category)
+  qq <- data.table(qq)
+  qq <- qq[,totsize:=sum(size),by=list(profile,chnge)]
+  qq <- as.data.frame(qq)
+  qq$perc <- round(qq$size*100/qq$totsize,2)
+  
+    
+  ggplot(qq[qq$chnge=="up",], aes(y=perc, x=category,fill=category,alpha=0.2)) + geom_bar(    stat="identity",position="dodge")+
+    scale_fill_brewer(palette = "Dark2")+
+    facet_wrap(~profile,nrow = 2)+coord_flip()+
+    geom_hline(yintercept = 0,col="black")+
+    theme_bw()+gg_aes+ggtitle("overedited in D7 or D14")+
+    xlab("")+ylab("% of total DRE sites")
+
+```
+
+## Repeats (Underedited)
+```{r, p6, echo=T,fig.width=5,fig.height=6}
+  ggplot(qq[qq$chnge=="down",], aes(y=perc, x=category,fill=category,alpha=0.2)) + geom_bar(    stat="identity",position="dodge")+
+    scale_fill_brewer(palette = "Dark2")+
+    facet_wrap(~profile,nrow = 2)+coord_flip()+
+    geom_hline(yintercept = 0,col="black")+
+    theme_bw()+gg_aes+ggtitle("underedited in D7 or D14")+
+    xlab("")+ylab("% of total DRE sites")
+
+```
+
+## known/novel (Overedited)
+```{r, p7, echo=T,fig.width=5,fig.height=6}
+  qq <- c()
+  for(prof in levels(as.factor(r1$comparison))) {
+    qwe <- r1[r1$comparison==prof & r1$logFC >0,]
+    qq <- rbind(qq,
+               data.frame(profile=prof, data.frame(table(qwe$known)),total=nrow(qwe),chnge="up") )
+    qwe <- r1[r1$comparison==prof & r1$logFC <0,]
+    qq <- rbind(qq,
+                data.frame(profile=prof, data.frame(table(qwe$known)),total=nrow(qwe),chnge="down") )
+    rm(qwe)
+  }
+  names(qq)[2:3] <- c("category","size")
+  qq$category <- gsub("splice","splice_region",qq$category)
+  qq$category <- gsub("_prime_","'",qq$category)
+  qq$category <- gsub("_region","",qq$category)
+  qq <- data.table(qq)
+  qq <- qq[,totsize:=sum(size),by=list(profile,chnge)]
+  qq <- as.data.frame(qq)
+  qq$perc <- round(qq$size*100/qq$totsize,2)
+  
+    
+  ggplot(qq[qq$chnge=="up",], aes(y=perc, x=category,fill=category,alpha=0.2)) + geom_bar(    stat="identity",position="dodge")+
+    scale_fill_brewer(palette = "Dark2")+
+    facet_wrap(~profile,nrow = 2)+coord_flip()+
+    geom_hline(yintercept = 0,col="black")+
+    theme_bw()+gg_aes+ggtitle("overedited in D7 or D14")+
+    xlab("")+ylab("% of total DRE sites")
+
+```
+
+## known/novel (Underedited)
+```{r, p8, echo=T,fig.width=5,fig.height=6}
+  ggplot(qq[qq$chnge=="down",], aes(y=perc, x=category,fill=category,alpha=0.2)) + geom_bar(    stat="identity",position="dodge")+
+    scale_fill_brewer(palette = "Dark2")+
+    facet_wrap(~profile,nrow = 2)+coord_flip()+
+    geom_hline(yintercept = 0,col="black")+
+    theme_bw()+gg_aes+ggtitle("underedited in D7 or D14")+
+    xlab("")+ylab("% of total DRE sites")
+
+```
+
+## clustered (Overedited)
+```{r, p9, echo=T,fig.width=5,fig.height=6}
+  qq <- c()
+  for(prof in levels(as.factor(r1$comparison))) {
+    qwe <- r1[r1$comparison==prof & r1$logFC >0,]
+    qq <- rbind(qq,
+               data.frame(profile=prof, data.frame(table(qwe$clustered)),total=nrow(qwe),chnge="up") )
+    qwe <- r1[r1$comparison==prof & r1$logFC <0,]
+    qq <- rbind(qq,
+                data.frame(profile=prof, data.frame(table(qwe$clustered)),total=nrow(qwe),chnge="down") )
+    rm(qwe)
+  }
+  names(qq)[2:3] <- c("category","size")
+  qq$category <- gsub("splice","splice_region",qq$category)
+  qq$category <- gsub("_prime_","'",qq$category)
+  qq$category <- gsub("_region","",qq$category)
+  qq <- data.table(qq)
+  qq <- qq[,totsize:=sum(size),by=list(profile,chnge)]
+  qq <- as.data.frame(qq)
+  qq$perc <- round(qq$size*100/qq$totsize,2)
+  
+    
+  ggplot(qq[qq$chnge=="up",], aes(y=perc, x=category,fill=category,alpha=0.2)) + geom_bar(    stat="identity",position="dodge")+
+    scale_fill_brewer(palette = "Dark2")+
+    facet_wrap(~profile,nrow = 2)+coord_flip()+
+    geom_hline(yintercept = 0,col="black")+
+    theme_bw()+gg_aes+ggtitle("overedited in D7 or D14")+
+    xlab("")+ylab("% of total DRE sites")
+
+```
+
+## clustered (Underedited)
+```{r, p10, echo=T,fig.width=5,fig.height=6}
+  ggplot(qq[qq$chnge=="down",], aes(y=perc, x=category,fill=category,alpha=0.2)) + geom_bar(    stat="identity",position="dodge")+
+    scale_fill_brewer(palette = "Dark2")+
+    facet_wrap(~profile,nrow = 2)+coord_flip()+
+    geom_hline(yintercept = 0,col="black")+
+    theme_bw()+gg_aes+ggtitle("underedited in D7 or D14")+
+    xlab("")+ylab("% of total DRE sites")
+
+```
+
+
+
+
+# GO enrichment for DREs {.tabset .tabset-fade}
+- Genes corresponding to the differentially edited sites (FDR<0.05) were selected
+- GO enrichment was assessed for these genes against the list of expressed genes in the assay
+- List of expressed genes were derived as genes with atleast 1 FPKM expression in at least one of the replicates
+
+## Clustered Edits
+- These sites are defined as editing sites within 50bp of each other
+
+```{r, p11, echo=T,fig.width=10,fig.height=7}
+  load(paste0(DATADIR,file="33_DRE_DE_GOEnrichment.RData"))
+  z <- out[out$Count>=2 & out$change=="all",]
+  z <- z[order(z$Pvalue,decreasing = F),]
+  tms <- unique(z$Term)
+  z <- out[out$Term%in%tms,]
+  z$Pvalue <- -log10(z$Pvalue)
+  z <- z[z$Category!='Cellular Component',]
+  
+  ggplot(z,aes(x=comparison,y=Term))+geom_point(aes(col=Pvalue,size=Count*100/Size))+
+    xlab("")+ylab("")+theme_bw()+
+    scale_color_gradientn( colours = c("blue", "green", "orange", "red"), limits = c( 1,max(z$Pvalue)) )+
+    theme(axis.text = element_text(size=14,colour = "black"),
+          axis.text.x = element_text(angle = 45,hjust = 1),
+          strip.text = element_text(size=16,colour = "black"),
+          legend.text = element_text(size=13,colour = "black"),
+          legend.title = element_text(size=14,color = "black"))
+
+```
+
+## Spreadsheet
+
+```{r, p111, echo=T,fig.width=10,fig.height=7}
+datatable(out[out$change=="all",], extensions = 'Buttons',options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip', 
+                   buttons = c('excel', "csv")))
+
+```
+
+## All Edits
+
+```{r, p12, echo=T,fig.width=10,fig.height=7}
+  z <- out1[out1$Count>=2 & out1$change=="all",]
+  z <- z[order(z$Pvalue,decreasing = F),]
+  tms <- unique(z$Term)
+  z <- out[out$Term%in%tms,]
+  z$Pvalue <- -log10(z$Pvalue)
+  z <- z[z$Category!='Cellular Component',]
+  
+  ggplot(z,aes(x=comparison,y=Term))+geom_point(aes(col=Pvalue,size=Count*100/Size))+
+    xlab("")+ylab("")+theme_bw()+
+    scale_color_gradientn( colours = c("blue", "green", "orange", "red"), limits = c( 1,max(z$Pvalue)) )+
+    theme(axis.text = element_text(size=14,colour = "black"),
+          axis.text.x = element_text(angle = 45,hjust = 1),
+          strip.text = element_text(size=16,colour = "black"),
+          legend.text = element_text(size=13,colour = "black"),
+          legend.title = element_text(size=14,color = "black"))
+
+```
+
+
+## Spreadsheet
+
+```{r, p121, echo=T,fig.width=10,fig.height=7}
+datatable(out1[out1$change=="all",], extensions = 'Buttons',options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip', 
+                   buttons = c('excel', "csv")))
+
+```
+
+
+
+## All Edits within 3'UTR
+
+```{r, p122, echo=T,fig.width=10,fig.height=10}
+ load(paste0(DATADIR,file="33_DRE_DE_GOEnrichment_byGenomicfeatures.RData"))
+  out4$comparison <- paste0(out4$comparison,"_",out4$change)
+  out4$comparison <- gsub("_control","",out4$comparison)
+  out4$comparison <- gsub("_up","_overedited",out4$comparison)
+  out4$comparison <- gsub("_dn","_underedited",out4$comparison)
+  
+  out2 <- out4[out4$genomeAnno=="3_prime_UTR",]
+  z <- out2[out2$Count>=3,]
+  z <- z[order(z$Pvalue,decreasing = F),]
+  tms <- unique(z$Term)
+  z <- out2[out2$Term%in%tms,]
+  z$Pvalue <- -log10(z$Pvalue)
+  z <- z[z$Category!='Cellular Component',]
+  z$comparison <-factor(z$comparison,levels=c("D7_overedited", "D7_underedited", "D14_overedited", "D14_underedited"))
+  
+  ggplot(z,aes(x=comparison,y=Term))+geom_point(aes(col=Pvalue,size=Count*100/Size))+
+    xlab("")+ylab("")+theme_bw()+
+    scale_color_gradientn( colours = c("blue", "green", "orange", "red"), limits = c( 1,max(z$Pvalue)) )+
+    ggtitle("Editing changes within 3'UTR")+
+    theme(axis.text = element_text(size=14,colour = "black"),
+          axis.text.x = element_text(angle = 45,hjust = 1),
+          strip.text = element_text(size=16,colour = "black"),
+          legend.text = element_text(size=13,colour = "black"),
+          legend.title = element_text(size=14,color = "black"),
+          plot.title = element_text(size=18, hjust=0.5,colour = "black"))
+  
+
+```
+
+
+## Spreadsheet
+
+```{r, p123, echo=T,fig.width=10,fig.height=7}
+datatable(out2, extensions = 'Buttons',options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip', buttons = c('excel', "csv")))
+
+```
+
+
+
+## All Edits within Introns
+
+```{r, p124, echo=T,fig.width=10,fig.height=7}
+  load(paste0(DATADIR,file="33_DRE_DE_GOEnrichment_byGenomicfeatures.RData"))
+  out4$comparison <- paste0(out4$comparison,"_",out4$change)
+  out4$comparison <- gsub("_control","",out4$comparison)
+  out4$comparison <- gsub("_up","_overedited",out4$comparison)
+  out4$comparison <- gsub("_dn","_underedited",out4$comparison)
+  
+  out3 <- out4[out4$genomeAnno=="intron",]
+  z <- out3[out3$Count>=3,]
+  z <- z[order(z$Pvalue,decreasing = F),]
+  tms <- unique(z$Term)
+  z <- out3[out3$Term%in%tms,]
+  z$Pvalue <- -log10(z$Pvalue)
+  z <- z[z$Category!='Cellular Component',]
+  z$comparison <-factor(z$comparison,levels=c("D7_overedited", "D7_underedited", "D14_overedited", "D14_underedited"))
+  
+  ggplot(z,aes(x=comparison,y=Term))+geom_point(aes(col=Pvalue,size=Count*100/Size))+
+    xlab("")+ylab("")+theme_bw()+
+    scale_color_gradientn( colours = c("blue", "green", "orange", "red"), limits = c( 1,max(z$Pvalue)) )+
+    ggtitle("Editing changes within Introns")+
+    theme(axis.text = element_text(size=14,colour = "black"),
+          axis.text.x = element_text(angle = 45,hjust = 1),
+          strip.text = element_text(size=16,colour = "black"),
+          legend.text = element_text(size=13,colour = "black"),
+          legend.title = element_text(size=14,color = "black"),
+          plot.title = element_text(size=18, hjust=0.5,colour = "black"))
+  
+```
+
+
+## Spreadsheet
+
+```{r, p125, echo=T,fig.width=10,fig.height=7}
+datatable(out3, extensions = 'Buttons',options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip', buttons = c('excel', "csv")))
+
+```
+
+
+
+
+
+# Consequence analysis for DREs
+- I used Variant Effect Predictor (VEP) (ref-2) tool from ensembl database for annotating effect of missense mutations 
+- VEP uses SIFT tool to predict whether the missense variant has deleterious effect or whether it can be tolerated
+- The program uses multiple sequence alignment for similar species to assess whether the change location is conserved or if it has any unfavourable amino acid change and so on. 
+- Following table summarizes 
+
+## D7 v/s control {.tabset .tabset-fade}
+
+### PieChart
+
+```{r, p13, echo=T,fig.width=5,fig.height=5}
+  r1 <- res[res$comparison=="D7_control" & !is.na(res$SIFT) & res$adj.P.Val<0.05,]
+  r1 <- r1[,c("idx", "logFC","change", "comparison", "adj.P.Val",
+              "known", "repeats","clustered","snpeff_uq",  
+              "aaswap", "SIFT","control", "D7","D14", 
+              "tracking_id", "gene", "expn_l2fc", "expn_fdr","biotype","hg19" )] %>% unique
+  pie(table(r1$SIFT),col=c("red","green"))
+```
+
+### spreadsheet
+
+```{r, p14, echo=T,fig.width=7,fig.height=5}
+datatable(r1, extensions = 'Buttons',options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip', 
+                   buttons = c('excel', "csv")))
+
+```
+
+## D14 v/s control {.tabset .tabset-fade}
+
+### PieChart
+
+```{r, p15, echo=T,fig.width=5,fig.height=5}
+  r1 <- res[res$comparison=="D14_control" & !is.na(res$SIFT) & res$adj.P.Val<0.05,]
+  r1 <- r1[,c("idx", "logFC","change", "comparison", "adj.P.Val",
+              "known", "repeats","clustered","snpeff_uq",  
+              "aaswap", "SIFT","control", "D7","D14", 
+              "tracking_id", "gene", "expn_l2fc", "expn_fdr","biotype","hg19" )] %>% unique
+  pie(table(r1$SIFT),col=c("red","green"))
+  
+```
+
+### spreadsheet
+
+```{r, p16, echo=T,fig.width=7,fig.height=5}
+datatable(r1, extensions = 'Buttons',options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip', 
+                   buttons = c('excel', "csv")))
+```
+
+
+# Editing dynamics and transcript expression 
+- Here, I used transcript level expression as quantified by CuffDiff package (ref-3)
+- The heatmap are plotted using ComplexHeatmap package (ref-4)
+
+```{r, p17, echo=T,fig.width=7,fig.height=5}
+  require(circlize)
+  require(ComplexHeatmap)
+    
+  load(paste0(DATADIR,"DEExpression_DESeq2.RData"))
+  ggg <- out0[[1]][,c("id","geneStart","geneEnd")]
+  ggg$length <- abs(ggg$geneStart-ggg$geneEnd)
+  ggg <- ggg[,c("id","length")] %>% unique
+  cnt <- DESeq2::counts(outC[[2]],normalized=T) %>% as.data.frame
+  cnt$id <- rownames(cnt)
+  cnt <- merge(cnt,ggg,by="id",all.x=T)
+  rownames(cnt) <- cnt$id
+  cnt$id <- NULL
+  cnt[,1:9] <- cnt[,1:9]*1000/cnt$length
+  cnt$length <- NULL
+  rm(out0,out1,outC,ggg)
+  cnt <- apply(cnt,2,function(x){round(x*1e6/sum(x),2)})
+  cnt <- as.data.frame(cnt)
+  cnt <- cnt[rowSums(cnt)>0,]
+  cnt <- log2(cnt+1)
+  cnt <- apply(cnt,1,function(x){round((x-mean(x))/sd(x),2)}) %>% t %>% as.data.frame
+  names(cnt) <- unname(sampl[names(cnt)])
+  
+  col_rnorm = colorRamp2(c(min(cnt,na.rm=T), 0, max(cnt,na.rm=T)), c("white", "yellow2", "brown4"))
+  res$snpeff_uq <- gsub("splice","splice_region",res$snpeff_uq)
+  res$snpeff_uq <- gsub("_prime_","'",res$snpeff_uq)
+  
+  ht <- list()
+  for(prof in c("D7_control","D14_control")){
+    for(f in c("3'UTR","intron","splice_region","missense","synonymous")){
+      r1 <- subset(res, res$comparison==prof & res$snpeff_uq==f & res$logFC>0 & res$adj.P.Val<0.05)
+      r1 <- unique(r1$tracking_id)
+      r2 <- subset(res, res$comparison==prof & res$snpeff_uq==f & res$logFC<0 & res$adj.P.Val<0.05)
+      r2 <- unique(r2$tracking_id)
+      m <- rbind(cnt[rownames(cnt)%in%r1,],cnt[rownames(cnt)%in%r2,])
+       m <- m[,c("Control_R1","Control_R2","Control_R3",
+                "D7_R1","D7_R2","D7_R3",
+                "D14_R1","D14_R2","D14_R3")]
+     
+      spl <- c(rep("Over\nEdited",nrow(cnt[rownames(cnt)%in%r1,])),
+               rep("Under\nEdited",nrow(cnt[rownames(cnt)%in%r2,]))
+      )
+      
+      rownames(m) <- NULL
+      ht[[paste0(prof,"_",f)]] <- 
+        Heatmap(m,column_title = f,name = "scale",col = col_rnorm,cluster_columns = F,split =spl )
+      rm(r1,r2,m,spl)
+    }
+  }
+
+```
+
+## D7 v/s control {.tabset .tabset-fade}
+- All editing sites are considered
+
+```{r, results='asis', echo = T,fig.height=7,fig.width=6,message=F}
+ for (i in 1:5) {
+   cat("### ", names(ht)[i] ,"\n")
+   print(ht[[i]])
+    cat('\n\n')
+ }
+```
+
+## D14 v/s control {.tabset .tabset-fade}
+- All editing sites are considered
+
+```{r, results='asis', echo = T,fig.height=7,fig.width=6,message=F}
+ for (i in 6:10) {
+   cat("### ", names(ht)[i] ,"\n")
+   print(ht[[i]])
+  cat('\n\n')
+ }
+```
+
+
+```{r, p18, echo=T,fig.width=7,fig.height=5}
+  ht <- list()
+  for(prof in c("D7_control","D14_control")){
+    for(f in c("3'UTR","intron","splice_region","missense","synonymous")){
+      r1 <- subset(res, res$clustered>0 & res$comparison==prof & res$snpeff_uq==f & res$logFC>0 & res$adj.P.Val<0.05)
+      r1 <- unique(r1$tracking_id)
+      r2 <- subset(res, res$clustered>0 & res$comparison==prof & res$snpeff_uq==f & res$logFC<0 & res$adj.P.Val<0.05)
+      r2 <- unique(r2$tracking_id)
+      m <- rbind(cnt[rownames(cnt)%in%r1,],cnt[rownames(cnt)%in%r2,])
+       m <- m[,c("Control_R1","Control_R2","Control_R3",
+                "D7_R1","D7_R2","D7_R3",
+                "D14_R1","D14_R2","D14_R3")]
+     rownames(m) <- NULL
+      spl <- c(rep("Over\nEdited",nrow(cnt[rownames(cnt)%in%r1,])),
+               rep("Under\nEdited",nrow(cnt[rownames(cnt)%in%r2,]))
+      )
+      ht[[paste0(prof,"_",f)]] <- 
+        Heatmap(m,column_title = f,name = "scale",col = col_rnorm,cluster_columns = F,split =spl)
+      rm(r1,r2,m,spl)
+    }
+  }
+
+```
+
+## Clustered:D7 v/s control {.tabset .tabset-fade}
+- Editing sites clustered within 50bp of each other are considered
+
+```{r, results='asis', echo = T,fig.height=7,fig.width=6,message=F}
+ for (i in 1:3) {
+   cat("### ", names(ht)[i] ,"\n")
+   print(ht[[i]])
+    cat('\n\n')
+ }
+```
+
+## Clustered:D14 v/s control {.tabset .tabset-fade}
+- Editing sites clustered within 50bp of each other are considered
+
+```{r, results='asis', echo = T,fig.height=7,fig.width=6,message=F}
+ for (i in 6:8) {
+   cat("### ", names(ht)[i] ,"\n")
+   print(ht[[i]])
+    cat('\n\n')
+ }
+```
+
+
+
+# References
+1. Ritchie, ME, Phipson, B, Wu, D, Hu, Y, Law, CW, Shi, W, and Smyth, GK (2015).limma powers differential expression analyses for RNA-sequencing and microarray studies. Nucleic Acids Research 43(7), e47
+2. https://useast.ensembl.org/info/docs/tools/vep/index.html
+3. "Differential analysis of gene regulation at transcript resolution with RNA-seq", Cole Trapnell; Nature Biotechnology 31(1):46-53 (2013)
+4. Gu, Z. (2016) Complex heatmaps reveal patterns and correlations in multidimensional genomic data. DOI: 10.1093/bioinformatics/btw313
+
+
+# Sessioninfo
+```{r, sessioninfo, echo=T}
+sessionInfo()
+```

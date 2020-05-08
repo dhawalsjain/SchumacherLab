@@ -1,0 +1,242 @@
+---
+title: "Analyses of intronic and clustered editing sites"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    highlights: pygments
+    self_contained: true
+    number_sections: yes
+    theme: readable
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+  word_document:
+    toc: yes
+---
+
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(
+  echo=T, # shows code
+  cache=F,message = F, warning = F
+)
+set.seed(31)
+```
+
+```{r, Functions, echo=T}
+rm(list=ls())
+source("A:/work/scripts/SchumacherLab/vars.R")
+source("A:/work/scripts/SchumacherLab/functions.R")
+
+```
+
+
+# Do the editing sites localize the intron-exon junctions?
+- When we perform differential editing analysis, the proportion of editing events increase dramatically for intronic sites. 
+- Previously, it is suggested that intronic pre-mRNA sequences undergo hairpin formation and thereby stabilization of the pre-mRNA secondary structures.
+- This hairpins are primarily formed at the sites of RNA editing in the wild-type cases thereby preventing targeted innate immune response
+- In the wake of Adar mediated editing, the pre-mRNA is targeted by the Type-1 immune response pathways followed by INF-1 mediated response
+- In our RNA-seq data, we observe strong INF-1 response. 
+- Thus, it is worthwhile to assess whether the pre-mRNA undergoes any structural changes due to editing
+- In order to get high confidence results, I focus on hyperedited sites (clusters of editing events within 50bp of each other)
+
+
+# rates of editing across genomic features  {.tabset .tabset-fade}
+- In this section, I plot the scaled mean-editing events across junctions of intron/exons and UTRs
+- 2kb interval centered at the start or end of the feaures (i.e. introns, exons, UTRs) were used in the display
+- Number of features that had at least 1 overlapping editing site are displayed on the panel header
+- Number of editing events were counted in 10bp bins and the numbers were scaled by the row-sums
+- Mean editing events are displayed with bubbles, while the error bars represent 95% CI
+
+
+## All edited sites
+
+```{r, p1, echo=T,fig.width=0.1,fig.height=0.1}
+myf_plot <- function(pllist){
+  gb <- list()
+  for(f in names(pllist)){
+    gb[[f]] <-  local({
+      rect1=rbind(data.frame(xmin=100,xmax=Inf,ymin=0,ymax=Inf,loc="start"),
+                data.frame(xmin=0,xmax=100,ymin=0,ymax=Inf,loc="end"))
+    p <- ggplot(pllist[[f]],aes(x=pos,y=mean,ymin=mean-se,ymax=mean+se,col=profile))+
+      geom_point(size=4,alpha=0.5)+geom_linerange()+
+      ggtitle(f)+
+      facet_wrap(~loc,nrow = 1,scales = "free_x")+
+      geom_rect(data=rect1, aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax), fill="gray", alpha=0.3, inherit.aes = FALSE)+
+      geom_vline(xintercept = 101,col="black")+
+      ylab(paste0("row-scaled\n mean editing"))+xlab("")+
+      scale_x_continuous(breaks = c(1,50,100,150,200),labels = c("-1kb","","feature","","+1kb"),expand = c(0,0))+
+      scale_color_manual(values = cols)+theme_bw()+gg_aes+
+      theme(strip.background = element_blank(),
+            strip.placement =  "inside",
+            legend.position = "bottom")
+    print(p) 
+    })
+  }
+  gb
+}
+
+load(paste0(DATADIR,"33hc_EditingMetagenePlots_IntronExonUTRs.RData"))
+names(pllist) <- gsub("intorns", "introns",names(pllist))
+gb <- myf_plot(pllist)
+
+```
+
+
+```{r, p1.1, echo=T,fig.width=10,fig.height=8}
+grid.arrange(grobs=gb,nrow=2)
+```
+
+## Differentially edited sites (D7_control)
+
+```{r, p2, echo=T,fig.width=0.1,fig.height=0.1}
+load(paste0(DATADIR,"33hc_EditingMetagenePlots_IntronExonUTRs_D7vsControl.RData"))
+names(pllist) <- gsub("intorns", "introns",names(pllist))
+gb <- myf_plot(pllist)
+
+```
+
+```{r, p2.1, echo=T,fig.width=10,fig.height=8}
+grid.arrange(grobs=gb,nrow=2)
+```
+
+
+## Differentially edited sites (D14_control)
+
+```{r, p3, echo=T,fig.width=0.1,fig.height=0.1}
+load(paste0(DATADIR,"33hc_EditingMetagenePlots_IntronExonUTRs_D14vsControl.RData"))
+names(pllist) <- gsub("intorns", "introns",names(pllist))
+gb <- myf_plot(pllist)
+
+```
+
+```{r, p3.1, echo=T,fig.width=10,fig.height=8}
+grid.arrange(grobs=gb,nrow=2)
+```
+
+
+## Reference Database editing sites
+- These are ~115k RE sites reported in Darned, RADAR and REDIPORTAL databases
+
+```{r, p4, echo=T,fig.width=0.1,fig.height=0.1}
+load(paste0(DATADIR,"EditingMetagenePlots_IntronExonUTRs_DBCalls.RData"))
+names(pllist) <- gsub("intorns", "introns",names(pllist))
+gb <- myf_plot(pllist)
+
+```
+
+
+```{r, p4.1, echo=T,fig.width=10,fig.height=8}
+grid.arrange(grobs=gb,nrow=2)
+```
+
+
+# Structure comparison of the RNA-hairpins 
+- Secondary structure predicted using RNAfold software (ref-1)
+- Color code on the figure can be read as high base pairing likelyhood
+- clustered events across genic regions are considered in the analyses
+- Please read the figure heading in following manner
+    * Gene 
+    * Annotation of the clustered editing locus
+    * numbner of edits in the cluster;
+- Note:The script computes a well-de???nedness measure called "positional entropy" and encodes it as color hue
+- Red (low entropy, well-de???ned) via green to blue and violet (high entropy, ill-de???ned).
+- Refer for more details (https://www.tbi.univie.ac.at/RNA/tutorial/)
+    
+
+## spreadsheet-report
+
+```{r, p5, echo=T,fig.width=8,fig.height=5}
+  myf<- function(path="A:/work/Kreidberg lab/Valerie/PAPER/PSVisulaization/Ref/DRE_Clustered_RefSeqs_Genomic_OUT.fa"){
+    ref <- read.delim(path,header=F,stringsAsFactors = F)
+    rh <-  data.frame(id=ref[seq(1,nrow(ref),6),])
+    rh$energy <- ref[seq(3,nrow(ref),6),]
+    rh$energy <- gsub(".*?\\(","",rh$energy)
+    rh$energy <- gsub("\\)","",rh$energy)
+    rh$energy <- as.numeric(rh$energy)
+    rh$id <- gsub(">","",rh$id)
+    rm(ref)
+    rh
+  }
+  
+  ref <- myf(path="A:/work/Kreidberg lab/Valerie/PAPER/33hc_PSVisulaization/Cntr/33hc_DRE_Clustered_RefSeqs_Genomic_OUT.fa")
+  alt <- myf(path="A:/work/Kreidberg lab/Valerie/PAPER/33hc_PSVisulaization/Exp/33hc_DRE_Clustered_AltSeqs_Genomic_OUT.fa")
+  names(ref)[2] <- "ref_energy"
+  names(alt)[2] <- "alt_energy"
+  rh <- merge(ref,alt,by="id")
+  rh$pic <- paste0(gsub("\\|","_",rh$id),"_rel.jpg")
+  rh$gene <- gsub("\\|\\S*","",rh$id)
+  rh$id <- gsub("^\\S*?\\|","",rh$id)
+  rh$ncluster <- gsub("\\|\\S*","",rh$id)
+  rh$id <- gsub("^\\S*?\\|","",rh$id)
+  rh$FDR <- gsub("\\|\\S*","",rh$id)
+  rh$FDR <- formatC(rh$FDR, format = "e", digits = 2)  
+  rh$id <- gsub("^\\S*?\\|","",rh$id)
+  rh$Anno <- gsub("\\|\\S*","",rh$id)
+  rh$Anno <- gsub("_prime_","'",rh$Anno)
+  rh$Anno <- gsub("_region","",rh$Anno)
+  rh$id <- gsub("^\\S*?\\|","",rh$id)
+  rh$medainChange <- gsub("\\|\\S*","",rh$id)
+  rh$id <- gsub("^\\S*?\\|","",rh$id)
+  rh$comparison <- gsub("\\|\\S*","",rh$id)
+  rh$id <- gsub("^\\S*?\\|","",rh$id)
+  rh$id <- NULL
+  rh <- rh[,c("gene", "ncluster", "FDR", "Anno", "medainChange", "comparison","ref_energy", "alt_energy", "pic")]
+
+  rh$score <- round((rh$ref_energy- rh$alt_energy)*100/abs(rh$ref_energy),2)
+  rh <- rh[order(rh$score,decreasing = T),]
+  
+  rh1 <- rh[,c("gene", "ncluster", "FDR", "Anno", "medainChange", "comparison", 
+"ref_energy", "alt_energy", "score")]
+  names(rh1) <- c("gene", "EditsInClusters", "FDR_EditLevels", "Anno", "medainEditChange", "comparison", 
+                "Control_energy", "D7/D14_energy", "score")
+  
+  load(paste0(DATADIR,"33hc_Spreadsheet_HCEditsWithCompleteAnno.RData"))
+  SPN <- SPN[,c("gene","Control_log2Expn","D7_log2Expn","D14_log2Expn","GOAnno","link")] %>% unique
+  rh1 <- merge(rh1, SPN,by="gene",all.x=T)
+
+  datatable(rh1, extensions = 'Buttons',options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip', buttons = c('excel', "csv")))
+
+```
+
+## Figures( top 20 instances)
+
+```{r, p6, echo=T,fig.width=8,fig.height=6}
+  library(ggplot2)
+  library(magick)
+  
+  for(i in 1:20){
+    if(as.numeric(rh$medainChange[i])<0){
+      myx <- "(Low editing)"
+      myy <- "(High editing)"
+    }else{
+      myy <- "(Low editing)"
+      myx <- "(High editing)"
+    }
+    
+    p1 <- ggdraw() + draw_image(paste0("A:/work/Kreidberg lab/Valerie/PAPER/33hc_PSVisulaization/Cntr/",rh$pic[i]),scale = 0.8) +
+      ggtitle(paste0("Control\n",myy))+theme(plot.title = element_text(hjust = 0.5))
+    
+    p2 <- ggdraw() + draw_image(paste0("A:/work/Kreidberg lab/Valerie/PAPER/33hc_PSVisulaization/Exp/",rh$pic[i]),scale = 0.8)+ggtitle(paste0(gsub("_control","",rh$comparison[i]),"\n",myx))+theme(plot.title = element_text(hjust = 0.5))
+    
+    nm <- paste0(rh$gene[i], "\n(",rh$Anno[i],", edits=", rh$ncluster[i],")")
+
+    grid.arrange(p1,p2,nrow=1,top = textGrob(nm,gp=gpar(fontsize=18,font=3)))
+    rm(p1,p2,nm,myx,myy)
+  }
+  
+```
+
+
+# References
+1. Mathews DH, Disney MD, Childs JL, Schroeder SJ, Zuker M, Turner DH. (2004) Incorporating chemical modification constraints into a dynamic programming algorithm for prediction of RNA secondary structure. Proc Natl Acad Sci U S A 101(19):7287-92.
+
+
+
+# Sessioninfo
+```{r, sessioninfo, echo=T}
+sessionInfo()
+```

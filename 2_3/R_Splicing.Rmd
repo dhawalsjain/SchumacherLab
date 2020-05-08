@@ -1,0 +1,208 @@
+---
+title: "Splicing Analyses (Suppa)"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    highlights: pygments
+    self_contained: true
+    number_sections: yes
+    theme: readable
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+  word_document:
+    toc: yes
+---
+
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(
+  echo=T, # shows code
+  cache=F,message = F, warning = F
+)
+set.seed(31)
+```
+
+```{r, Functions, echo=T}
+rm(list=ls())
+source("vars.R")
+
+```
+
+
+
+# Splicing assessments
+
+- To this end, I used Suppa for quantifying changes in alternate splicing between control and D7/D14 samples
+- (Copying detais from Suppa github page)
+- What does Suppa2 do?
+    * Generate transcript events and local alternative splicing (AS) events from an annotation
+    * Quantify transcript and local AS event inclusion levels (PSIs) from multiple samples
+    * Calculate differential splicing for AS events and differential transcript usage across multiple conditions with replicates
+    * Cluster events and transcripts according to PSI values across conditions
+- Different alternate splicing events
+    * Skipping Exon (SE)
+    * Alternative 5'/3' Splice Sites (A5/A3)
+    * Mutually Exclusive Exons (MX)
+    * Retained Intron (RI)
+    * Alternative First/Last Exons (AF/AL)
+
+![AS events on forward strand](A:/work/Kreidberg lab/Valerie/PAPER/RAW/images/suppa2_1.png)
+![AS events on reverse strand](A:/work/Kreidberg lab/Valerie/PAPER/RAW/images/suppa2_2.png)
+
+The figure describes the nomenclature for events in the forward (upper panel) and reverse (lower panel) strands. Each event is identified uniquely by a set of coordinates: The start (s) and end (e) coordinates for the different exonic regions involved in the event. The external coordinates of the event are only used for the RI, AF and AL events. The form of the alternative splicing event that includes the region in black is the one for which the relative inclusion level (PSI) is given. The gray area denotes the other alternative form of the event. For instance, for RI the inclusion level is given for the form that retains the intron. Important: for the non-symmetrical events note that the meaning of the coordinates varies depending on the strand
+
+- I used HTSeq (ref.2) for quantifying abundance of RNA tags at transcript level from our sequencing samples
+- Next, I used Suppa2 pipeline to assess whether the alternative transcripts as noted in mouse database show any alteration in their abundance along the categories as mentioned above
+- The results are ultimately displayed as Volcano plots
+
+
+
+# D7_control  {.tabset .tabset-fade}
+
+## Volcano plot
+- Following Volcano plot summarizes the changes in PSI on X-axis and associated P.values on Y-axis
+
+```{r, p1, echo=T,fig.width=8,fig.height=6}
+  load(paste0(DATADIR,"EditingLevelReport_Anno.RData"))
+  load(paste0(DATADIR,"DRE_DE_matrix.RData"))
+  load(paste0(DATADIR,"SplicingReport_SUPPA.RData"))
+  load(paste0(DATADIR,"genes.RData"))
+  genes <- gGenes[,c("strand","gene","gene_id","biotype")] %>% unique
+  rrr <- res[,c("idx","logFC","change","adj.P.Val","comparison")] %>% unique
+  names(rrr) <- c("Editing_Event","DRE_Log2FC","DRE_change","DRE_FDR","comparison")
+  
+  r <- as(res,"GRanges")
+  r1 <- r[r$comparison=="D7_control" & r$adj.P.Val<0.05]
+  r2 <- r[r$comparison=="D14_control" & r$adj.P.Val<0.05]
+  
+  pl  <- c()
+  q1 <- spl[grep("D7_Control",spl$test)]
+  olp <- findOverlaps(r1,resize(q1,101,"center"),ignore.strand=T) %>% as.data.frame
+  q1$gene <- q1$idx <- NA 
+  q1[olp$subjectHits]$gene <- r1[olp$queryHits]$gene
+  q1[olp$subjectHits]$idx <- r1[olp$queryHits]$idx
+  q1 <- as.data.frame(q1)
+  q1$comparison <- "D7_control"
+  pl <- rbind(pl, q1)
+  
+  q1 <- spl[grep("D14_Control",spl$test)]
+  olp <- findOverlaps(r2,resize(q1,101,"center"),ignore.strand=T) %>% as.data.frame
+  q1$gene <- q1$idx <- NA 
+  q1[olp$subjectHits]$gene <- r2[olp$queryHits]$gene
+  q1[olp$subjectHits]$idx <- r2[olp$queryHits]$idx
+  q1 <- as.data.frame(q1)
+  q1$comparison <- "D14_control"
+  pl <- rbind(pl, q1)
+  rm(q1,r1,r2,r)
+  
+  #pl$gene <- ifelse(is.na(pl$gene),"",as.character(pl$gene))
+  ## plots
+  pl$test <- gsub("_\\S*","",pl$test)
+  pl$label <- paste0(pl$gene,"(",pl$test,")")
+  pl$label <- ifelse(is.na(pl$gene),as.character(""),as.character(pl$label))
+  pl$change <- as.numeric(as.character(pl$change))
+  pl$pval <- as.numeric(as.character(pl$pval))
+  
+  pl1 <- pl[pl$comparison=="D7_control",]
+  pl2 <- pl1[pl1$pval<=0.1 & !is.na(pl1$gene),]
+  gg <- ggplot(pl1,aes(x=change,y=-log10(pval)))+geom_point(size=0.25)+theme_bw()+
+    geom_point(data = pl2,aes(x=change,y=-log10(pval),label=label),col="red",size=2.5,inherit.aes = F)+
+    geom_text_repel(aes(x=change,y=-log10(pval),label=label),data = pl2,inherit.aes = F,point.padding = 0.2,
+                    col="green4",size=8)+
+    theme(axis.text = element_text(size=14,colour = "black"),
+          axis.title = element_text(size=14,colour = "black"),
+          legend.text = element_text(size=13,colour = "black"),
+          legend.title = element_text(size=14,color = "black"),
+          plot.title = element_text(size=18,colour = "black",hjust = 0.5))+
+    xlab("change PSI")+ggtitle("D7 vs Control")
+  gg
+  
+```
+
+## Spreadsheet (All)
+- The following spreadsheet summarizes all changes in the alternate splicnig as calculated by Suppa2
+
+```{r, p2, echo=T,fig.width=8,fig.height=6}
+  pl1 <- pl1[,c("seqnames", "start", "end", "change", "pval", "test", "ensembl", "idx")]
+  names(pl1) <- c("chr","AS_start","AS_end","AS_change","Pvalue","Type_of_AS","gene_id", "Editing_Event")
+  pl1 <- merge(pl1,genes,by="gene_id",all.x=T)
+  pl1 <- merge(pl1,rrr[rrr$comparison=="D7_control",],by="Editing_Event",all.x=T)
+  pl2 <- pl1[pl1$Pvalue<0.05 & !is.na(pl1$Editing_Event),]
+
+datatable(pl1, extensions = 'Buttons',options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip',                                                    buttons = c('excel', "csv")))
+```
+
+## Spreadsheet (Edits)
+- The following spreadsheet summarizes changes in AS when the RNA editing event is occuring within its 50bp distance
+
+```{r, p3, echo=T,fig.width=8,fig.height=6}
+datatable(pl2, extensions = 'Buttons',options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip',                                                    buttons = c('excel', "csv")))
+```
+
+
+# D14_control  {.tabset .tabset-fade}
+
+## Volcano plot
+
+```{r, p4, echo=T,fig.width=8,fig.height=6}
+  pl1 <- pl[pl$comparison=="D14_control",]
+  pl2 <- pl1[pl1$pval<=0.1 & !is.na(pl1$gene),]
+  qq <- ggplot(pl1,aes(x=change,y=-log10(pval)))+geom_point(size=0.25)+theme_bw()+
+    geom_point(data = pl2,aes(x=change,y=-log10(pval),label=label),col="red",size=2.5,inherit.aes = F)+
+    geom_text_repel(aes(x=change,y=-log10(pval),label=label),data = pl2,inherit.aes = F,point.padding = 0.2,
+                    col="green4",size=8)+
+    theme(axis.text = element_text(size=14,colour = "black"),
+          axis.title = element_text(size=14,colour = "black"),
+          legend.text = element_text(size=13,colour = "black"),
+          legend.title = element_text(size=14,color = "black"),
+          plot.title = element_text(size=18,colour = "black",hjust = 0.5))+
+    xlab("change PSI")+ggtitle("D14 vs Control")
+  qq
+
+```
+
+
+## Spreadsheet (All)
+- The following spreadsheet summarizes all changes in the alternate splicnig as calculated by Suppa2
+
+```{r, p5, echo=T,fig.width=8,fig.height=6}
+  pl1 <- pl1[,c("seqnames", "start", "end", "change", "pval", "test", "ensembl", "idx")]
+  names(pl1) <- c("chr","AS_start","AS_end","AS_change","Pvalue","Type_of_AS","gene_id", "Editing_Event")
+  pl1 <- merge(pl1,genes,by="gene_id",all.x=T)
+  pl1 <- merge(pl1,rrr[rrr$comparison=="D14_control",],by="Editing_Event",all.x=T)
+  pl2 <- pl1[pl1$Pvalue<0.05 & !is.na(pl1$Editing_Event),]
+
+datatable(pl1, extensions = 'Buttons',options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip',                                                    buttons = c('excel', "csv")))
+```
+
+## Spreadsheet (Edits)
+- The following spreadsheet summarizes changes in AS when the RNA editing event is occuring within its 50bp distance
+
+```{r, p6, echo=T,fig.width=8,fig.height=6}
+datatable(pl2, extensions = 'Buttons',options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip',                                                    buttons = c('excel', "csv")))
+```
+
+
+# References
+1. https://genomebiology.biomedcentral.com/articles/10.1186/s13059-018-1417-1
+2. https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4287950/
+
+# Sessioninfo
+```{r, sessioninfo, echo=T}
+sessionInfo()
+```
+
+
+
+
+
+
+
+
+
+
+
